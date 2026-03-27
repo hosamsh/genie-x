@@ -457,7 +457,7 @@ wheels = [
 ]
 
 [[package]]
-name = "gennie-x"
+name = "genie-x"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },

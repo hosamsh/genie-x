@@ -5,7 +5,7 @@ Contains Turn (raw extraction) and EnrichedTurn (with computed fields).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 from .dataclass_mixin import DataclassIO
 
@@ -71,6 +71,10 @@ class Turn(DataclassIO):
     # Raw code edits (as extracted, no metrics yet)
     code_edits: List[CodeEdit] = field(default_factory=list)
     
+    # Relationship tracking (for subagent / forked sessions)
+    parent_session_id: Optional[str] = None
+    relationship_type: Optional[str] = None  # "subagent", "fork", etc.
+
     # Agent-specific extras (preserves unknown fields)
     extra: Dict[str, Any] = field(default_factory=dict)
 
@@ -82,7 +86,7 @@ class Turn(DataclassIO):
         # Convert code_edits dicts to CodeEdit objects if present
         if instance.code_edits and isinstance(instance.code_edits, list):
             instance.code_edits = [
-                CodeEdit.from_dict(item) if isinstance(item, dict) else item
+                CodeEdit.from_dict(cast(Dict[str, Any], item)) if isinstance(item, dict) else item
                 for item in instance.code_edits
             ]
 
@@ -154,12 +158,12 @@ class EnrichedTurn(Turn):
     def from_dict(cls, payload: Dict[str, Any]) -> "EnrichedTurn":
         """Create a turn, stashing unknown keys in .extra."""
         # Use parent logic to handle basic fields and extra
-        instance = super().from_dict(payload)
+        instance = cast("EnrichedTurn", super().from_dict(payload))
 
         # Convert code_edits dicts to CodeEdit objects if present
         if instance.code_edits and isinstance(instance.code_edits, list):
             instance.code_edits = [
-                CodeEdit.from_dict(item) if isinstance(item, dict) else item
+                CodeEdit.from_dict(cast(Dict[str, Any], item)) if isinstance(item, dict) else item
                 for item in instance.code_edits
             ]
 

@@ -1,4 +1,4 @@
-"""Logger implementation for the gennie-x pipeline.
+"""Logger implementation for the genie-x pipeline.
 
 Provides a custom logger class that:
 - Outputs to console with colored formatting
@@ -56,7 +56,7 @@ class ColoredFormatter(logging.Formatter):
         logging.CRITICAL: Colors.RED + Colors.BOLD,
     }
     
-    def __init__(self, fmt: str = None, datefmt: str = None, use_colors: bool = True):
+    def __init__(self, fmt: Optional[str] = None, datefmt: Optional[str] = None, use_colors: bool = True):
         super().__init__(fmt, datefmt)
         self.use_colors = use_colors
     
@@ -223,7 +223,7 @@ class LoggingManager:
 
 
 def setup_logging(
-    level: Union[int, str] = None,
+    level: Optional[Union[int, str]] = None,
     use_colors: bool = True,
 ) -> None:
     """Configure the logging system.
@@ -253,7 +253,7 @@ def setup_logging(
             level = "INFO"
         except Exception as e:
             # Unexpected error reading config - log warning and use default
-            print(f"Warning: Failed to read logging config: {e}", file=sys.stderr)
+            sys.stderr.write(f"Warning: Failed to read logging config: {e}\n")
             level = "INFO"
     
     if isinstance(level, str):

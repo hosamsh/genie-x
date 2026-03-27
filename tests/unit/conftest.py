@@ -1,4 +1,4 @@
-"""Pytest fixtures for gennie-x tests.
+"""Pytest fixtures for genie-x tests.
 
 This module provides test harness fixtures (Tier 0) including:
 - T0-1: Temporary run directory fixture
@@ -502,7 +502,8 @@ def make_test_config(tmp_path):
         copilot_storage=None,
         cursor_storage=None,
         cursor_global_storage=None,
-        claude_dir=None
+        claude_dir=None,
+        copilot_cli_session_state_dir=None,
     ) -> Path:
         """Create a test config file with specified paths.
         
@@ -511,6 +512,7 @@ def make_test_config(tmp_path):
             cursor_storage: Path to cursor workspace storage  
             cursor_global_storage: Path to cursor global storage
             claude_dir: Path to .claude directory
+            copilot_cli_session_state_dir: Path to copilot CLI session-state dir
             
         Returns:
             Path to created config file
@@ -527,6 +529,9 @@ def make_test_config(tmp_path):
                 },
                 "claude_code": {
                     "claude_dir": str(claude_dir) if claude_dir else str(tmp_path / "empty_claude")
+                },
+                "copilot_cli": {
+                    "session_state_dir": str(copilot_cli_session_state_dir) if copilot_cli_session_state_dir else str(tmp_path / "empty_copilot_cli")
                 }
             },
             "llm_models": {},

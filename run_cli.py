@@ -59,7 +59,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     # Version flag
     parser.add_argument(
         "--version", "-v", action="version",
-        version=f"gennie-x {__version__}",
+        version=f"genie-x {__version__}",
         help="Show version and exit"
     )
     

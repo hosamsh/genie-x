@@ -1,7 +1,7 @@
 """
 Shared state for the Browse Chats web feature.
 
-Uses the same database as the CLI pipeline (gennie.db in the run directory).
+Uses the same database as the CLI pipeline (genie.db in the run directory).
 Extraction status is determined by presence of data in turns/combined_turns tables.
 
 
@@ -249,7 +249,6 @@ def get_all_workspace_metadata() -> Dict[str, Any]:
     Returns:
         Dict mapping workspace_id -> WorkspaceInfo
     """
-    from pathlib import Path
     from src.shared.models.workspace import WorkspaceInfo
     from src.pipeline.extraction.workspace_discovery import list_all_workspaces
     
@@ -357,8 +356,8 @@ def get_all_workspace_metadata() -> Dict[str, Any]:
             by_folder[ws_id] = ws_info
             continue
         
-        # Normalize folder for comparison
-        normalized_folder = Path(folder).as_posix().lower()
+        # Normalize folder for comparison (URI-safe: don't use Path which mangles ://)
+        normalized_folder = folder.replace("\\", "/").lower()
         
         if normalized_folder not in folder_to_canonical_id:
             # First workspace with this folder - use it as canonical

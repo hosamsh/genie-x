@@ -6,10 +6,13 @@ Tests:
 - T1-6: Extract is idempotent without force refresh
 - T1-7: Extract force refresh replaces data
 """
+import logging
 import sqlite3
 
 
 from conftest import get_test_db_path
+
+logger = logging.getLogger(__name__)
 
 
 def test_extract_single_workspace_creates_database(cli_runner, make_test_config, copilot_workspace, run_dir):
@@ -339,13 +342,13 @@ def test_cleaned_text_differs_from_original_when_shrinking_applies(
                 if cleaned_tokens < original_tokens:
                     # Log the reduction for visibility
                     reduction = round((1 - cleaned_tokens / original_tokens) * 100, 1)
-                    print(f"TextShrinker reduced tokens: {original_tokens} -> {cleaned_tokens} ({reduction}% reduction)")
+                    logger.info("TextShrinker reduced tokens: %d -> %d (%.1f%% reduction)", original_tokens, cleaned_tokens, reduction)
             break
     
     # If shrinking didn't apply, that's acceptable - log it for visibility
     # The important thing is that extraction processed the text correctly
     if not shrinking_applied:
-        print(f"Note: TextShrinker did not modify any of the {len(rows)} turns with long text. "
-              "This may be expected depending on text structure and shrinker thresholds.")
+        logger.info("TextShrinker did not modify any of the %d turns with long text. "
+                    "This may be expected depending on text structure and shrinker thresholds.", len(rows))
     
     conn.close()

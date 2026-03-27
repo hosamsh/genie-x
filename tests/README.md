@@ -1,6 +1,6 @@
 # Tests
 
-This directory contains all tests for the gennie-x project.
+This directory contains all tests for the genie-x project.
 
 ## Running Tests
 
@@ -113,7 +113,7 @@ uv run pytest tests/ -m "not integration" -v
 Make sure you're running from the project root:
 
 ```bash
-cd c:\code\projects\gennie-x
+cd c:\code\projects\genie-x
 uv run pytest tests/unit/ -v
 ```
 

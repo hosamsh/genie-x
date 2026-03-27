@@ -50,6 +50,8 @@ def extract_workspace(workspace_id: str, agent_filter: Optional[str] = None) -> 
 
     for agent_name in agents:
         ExtractorClass = get_extractor_class(agent_name)
+        if ExtractorClass is None:
+            continue
         extractor = None
         try:
             # Use agent-specific workspace ID if available, otherwise use the provided one

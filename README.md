@@ -1,34 +1,43 @@
-# Gennie-X: AI Coding Agent Chat Extractor
+# Genie-X: AI Coding Agent Conversation Explorer
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![uv](https://img.shields.io/badge/uv-package%20manager-blueviolet)](https://github.com/astral-sh/uv) 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-> **⚠️ 100% AI-Generated Project**: This is an experiment in end-to-end AI-driven development, so expect alpha-quality with rough edges. The entire codebase was built by AI coding agents. Zero human-written code. Feedback most welcome!
+> **⚠️ The bulk of this project's codebase was generated using AI coding assistants.
 
 
 ## 🔬 What is This?
 
-**Gennie‑X** extracts and indexes conversations from multiple AI coding assistants into a single, searchable local database. Use it to analyze agent interactions, run semantic search, and generate usage reports. Currently supported sources: GitHub Copilot, Cursor, and Claude Code.
+Every AI coding session you run — GitHub Copilot, Cursor, Claude Code, Copilot CLI — writes structured conversation data to local storage. That data is scattered across different formats and directories, and none of these tools let you search, compare, or analyze it.
+
+**Genie‑X** extracts those conversations into a single indexed database. You get full-text and semantic search across every session you've ever had, usage analytics per workspace, and a local web UI to browse it all. No cloud dependency, no API keys required for core functionality. It reads what's already on your machine.
+
+**Why it matters:**
+- **Find anything you've previously discussed** with AI agents, across any project, instantly
+- **Understand how you use AI tools** — which models, how many turns, which projects get the most agent help
+- **Compare agents side-by-side** — same workspace, different tools, all in one view
+- **Own your data** — everything stays local, indexed in SQLite
 
 <table>
   <tr>
-    <td width="30%" valign="top" rowspan="2"><img src="src/web/static/screenshots/gennie-x-sys-overview-screen.jpg" alt="Mission Control" /></td>
-    <td width="70%" valign="top"><img src="src/web/static/screenshots/gennie-x-chat-screen.jpg" alt="Conversation Explorer" /></td>
+    <td width="30%" valign="top" rowspan="2"><img src="src/web/static/screenshots/Genie-x-sys-overview-screen.jpg" alt="Mission Control" /></td>
+    <td width="70%" valign="top"><img src="src/web/static/screenshots/genie-x-chat-screen.jpg" alt="Conversation Explorer" /></td>
   </tr>
   <tr>
-    <td width="70%" valign="top"><img src="src/web/static/screenshots/gennie-x-search-screen.jpg" alt="Search Interface" /></td>
+    <td width="70%" valign="top"><img src="src/web/static/screenshots/genie-x-search-screen.jpg" alt="Search Interface" /></td>
   </tr>
 </table>
 
 ### ✨ Features
 
-- **Multi-Agent Support**: Extract conversations from GitHub Copilot, Cursor, and Claude Code
-- **Web Dashboard**: Local web UI to browse workspaces, view analytics, and explore conversations
-- **CLI Interface**: Equivalent command-line tools for automation and scripting
-- **Semantic Search**: Search through your conversation history with AI-powered semantic search (Sentence Transformers embeddings + SQLite FTS5 keyword search)
-- **Code Metrics Extraction**: Extracts code metrics (via `lizard` and related tooling) to summarize complexity and size across extracted code artifacts
-- **Plugins**: extensible to support new AI coding agents
+- **Multi-Agent Extraction**: GitHub Copilot, Cursor, Claude Code, and GitHub Copilot CLI — each with a dedicated extractor plugin that handles the agent's native storage format
+- **Web Dashboard**: Local web UI for browsing workspaces, viewing per-session analytics, and exploring full conversation threads
+- **Semantic + Keyword Search**: Sentence Transformers embeddings combined with SQLite FTS5 for both meaning-based and exact-match search across all extracted conversations
+- **CLI Interface**: Full command-line access for automation: list workspaces, extract, search, refresh
+- **Code Metrics**: Extracts complexity and size metrics from code artifacts in conversations (via `lizard`)
+- **Plugin Architecture**: Add support for new agents by dropping an extractor plugin into `src/extract_plugins/`
+- **Turn Merging**: Consecutive same-role messages are automatically merged so output always alternates user/assistant — consistent across all extractors
 
 ## 🚀 Quick Start
 
@@ -36,14 +45,14 @@
 
 - Python 3.11 or higher
 - [uv](https://github.com/astral-sh/uv) - Fast Python package manager
-- One or more supported AI coding agents installed (GitHub Copilot / Cursor / Claude Code)
+- One or more supported AI coding agents installed (GitHub Copilot / Cursor / Claude Code / GitHub Copilot CLI)
 
 ### Installation
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/hosamsh/gennie-x.git
-   cd gennie-x
+   git clone https://github.com/hosamsh/genie-x.git
+   cd genie-x
    ```
 
 2. **Install dependencies**
@@ -99,7 +108,7 @@ uv run python run_cli.py --list
 uv run python run_cli.py --extract <workspace-id> --run-dir data/<dir-name>
 
 # Extract all workspaces for a specific agent
-uv run python run_cli.py --extract --all --agent <copilot|cursor|claude_code> --run-dir data/<dir-name>
+uv run python run_cli.py --extract --all --agent <copilot|cursor|claude_code|copilot_cli> --run-dir data/<dir-name>
 
 # Refresh an existing workspace (incremental sync; only new/changed turns)
 uv run python run_cli.py --extract <workspace-id> --run-dir data/<dir-name>
@@ -156,29 +165,33 @@ See [Agent Extractor Interface Docs](src/extract_plugins/readme.md)
 
 
 ## 🧪 Running Tests
-see [tests/readme.md](https://github.com/hosamsh/gennie-x/blob/89e6da3547689b095ad4b4cb3cadf6541cc550de/tests/README.md)
 
+See [tests/README.md](tests/README.md) for full details.
 
-> **Note**: Do not use `python -m pytest` or activate a `.venv` manually - use `uv run pytest` instead.
+```bash
+# Run all unit tests
+uv run pytest tests/unit/ -x -q
 
-## 📋 Issues & Limitations
+# Run a specific test file
+uv run pytest tests/unit/test_copilot_cli_extract.py -x -q
+```
 
-- Primarily tested on Windows
-- Duplicate workspace entries when edited by Claude Code + other vs-code based agents
-- Claude Code session names are GUIDs
-- Left-side navigation resize briefly on page loads
+> **Note**: Always use `uv run pytest` — do not use `python -m pytest` or activate a `.venv` manually.
+
+## 📋 Known Limitations
+
+- Primarily tested on Windows (macOS/Linux should work but is less tested)
+- Duplicate workspace entries when the same project is edited by Claude Code + a VS Code-based agent
+- Claude Code session names are GUIDs (no human-readable titles available in the source data)
+- AI agent local storage formats are undocumented and can change between releases — extractors are best-effort and may need updates
 
 
 ## 🤝 Contributing
 
-TBD.
+Contributions welcome. If you notice missing or misaligned data from an agent, open an issue — extractor improvements are especially valuable.
 
 ## 📄 License
 
-You’re free to use, copy, modify, and redistribute this project.
+MIT — free to use, copy, modify, and redistribute.
 
 ---
-
-## ⚠️ Note about Extraction Reliability
-
-Gennie‑X reads agent‑specific local storage formats to reconstruct conversations. Those formats and field locations can change between agent releases, and there is no universal standard—so extraction is best‑effort and may require occasional updates to extractors. If you notice missing or misaligned data, please open an issue; contributions to improve extractor robustness are welcome.

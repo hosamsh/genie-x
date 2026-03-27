@@ -135,9 +135,13 @@ def get_dashboard_data_payload(workspace_id: str, dashboard_id: str) -> dict:
 
                 elif chart.data_source.type == DataSourceType.TASK:
                     task_name = chart.id
-                    distribution = provider.get_task_value_distribution(
-                        task_name=task_name,
-                        display_options=chart.options if chart.options else {},
+                    distribution = _call_provider_function(
+                        provider,
+                        "get_task_value_distribution",
+                        kwargs={
+                            "task_name": task_name,
+                            "display_options": chart.options if chart.options else {},
+                        },
                     )
                     charts_data[chart.id] = distribution
                 

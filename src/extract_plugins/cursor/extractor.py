@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from src.shared.models.turn import Turn
-from src.shared.io.paths import normalize_path, decode_file_uri
+from src.shared.io.paths import normalize_path, decode_file_uri, is_contained_in
 from src.shared.logging.logger import get_logger
 
 from .bubbles import BubbleData, parse_bubble, parse_timestamp
@@ -167,11 +167,16 @@ def discover_workspaces(
         for folder in workspace_storage.iterdir():
             if not folder.is_dir():
                 continue
+
+            # Containment guard: reject symlinks that escape workspace_storage
+            if not is_contained_in(folder, workspace_storage):
+                logger.warning("Workspace folder escapes storage root, skipping: %s", folder)
+                continue
             
             workspace_db = folder / "state.vscdb"
             if not workspace_db.exists():
                 continue
-            
+
             try:
                 meta = _load_workspace_meta(folder, workspace_db, global_conn)
                 if meta and meta.composer_ids:
@@ -471,7 +476,6 @@ def extract_workspace(
     workspace_conn = None
     
     try:
-        # Open database connections
         if global_db_path.exists():
             global_conn = sqlite3.connect(str(global_db_path))
         

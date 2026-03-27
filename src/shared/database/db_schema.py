@@ -73,6 +73,7 @@ def init_shared_db(db_path: Path, verbose: bool = True) -> sqlite3.Connection:
     ensure_combined_turns_view(conn)
     ensure_code_metrics_table(conn)
     ensure_workspace_info_table(conn)
+    ensure_session_file_meta_table(conn)
     
     if verbose:
         cursor = conn.cursor()
@@ -133,14 +134,31 @@ def ensure_workspace_info_table(conn: sqlite3.Connection) -> None:
     conn.commit()
     logger.debug("Ensured workspace_info table exists")
 
+def _add_column_if_missing(
+    conn: sqlite3.Connection,
+    table: str,
+    column: str,
+    definition: str,
+) -> None:
+    """Add *column* to *table* if it does not already exist (SQLite migration helper)."""
+    cursor = conn.cursor()
+    cursor.execute(f"PRAGMA table_info({table})")
+    existing = {row[1] for row in cursor.fetchall()}
+    if column not in existing:
+        cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+        conn.commit()
+        logger.info("Migrated %s: added column %s %s", table, column, definition)
+
+
 def ensure_turns_table(conn: sqlite3.Connection) -> None:
     """Create turns table if it doesn't exist.
-    
+
     This table stores extraction results (raw conversation turns).
     Includes UNIQUE constraint on (session_id, turn) to prevent duplicates.
+    Also applies forward migrations for new columns on existing databases.
     """
     cursor = conn.cursor()
-    
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS turns (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -149,7 +167,7 @@ def ensure_turns_table(conn: sqlite3.Connection) -> None:
                 role TEXT,
                 text TEXT,
                 original_text TEXT,  -- Original text before cleaning
-                
+
                 -- Metadata
                 workspace_id TEXT,
                 workspace_name TEXT,
@@ -158,52 +176,58 @@ def ensure_turns_table(conn: sqlite3.Connection) -> None:
                 agent_used TEXT,
                 model_id TEXT,
                 request_id TEXT,
-                
+
                 -- Timestamps
                 timestamp_ms INTEGER,
                 timestamp_iso TEXT,
                 ts TEXT,
-                
+
                 -- Token usage (unified across Copilot and Cursor)
-                original_text_tokens INTEGER DEFAULT 0,  -- Tokens in original text before cleaning
-                cleaned_text_tokens INTEGER DEFAULT 0,   -- Tokens in text after cleaning
-                code_tokens INTEGER DEFAULT 0,           -- Tokens from attached/generated code
-                tool_tokens INTEGER DEFAULT 0,           -- Tokens from tool metadata/invocations
-                system_tokens INTEGER DEFAULT 0,         -- Reserved for system prompt overhead
-                session_history_tokens INTEGER DEFAULT 0, -- Cumulative tokens from all previous turns in session
-                thinking_tokens INTEGER DEFAULT 0,        -- Tokens in thinking content (reasoning models)
-                -- total_tokens is calculated as: original_text_tokens + code_tokens + tool_tokens + system_tokens
-                -- SQLite 3.31+ supports generated columns, but for compatibility we calculate in queries
-                
-                -- Thinking content (for reasoning models like Claude Sonnet thinking variants)
-                thinking_text TEXT,                      -- Concatenated thinking text from consecutive bubbles
-                thinking_duration_ms INTEGER,            -- Total thinking duration in milliseconds
-                
+                original_text_tokens INTEGER DEFAULT 0,
+                cleaned_text_tokens INTEGER DEFAULT 0,
+                code_tokens INTEGER DEFAULT 0,
+                tool_tokens INTEGER DEFAULT 0,
+                system_tokens INTEGER DEFAULT 0,
+                session_history_tokens INTEGER DEFAULT 0,
+                thinking_tokens INTEGER DEFAULT 0,
+
+                -- Thinking content (for reasoning models)
+                thinking_text TEXT,
+                thinking_duration_ms INTEGER,
+
                 -- Language info
                 primary_language TEXT,
                 languages TEXT,  -- JSON array
-                
+
                 -- Context
                 files TEXT,  -- JSON array
                 tools TEXT,  -- JSON array
-                
+
                 -- Agent-specific fields (nullable)
                 merged_request_ids TEXT,  -- JSON array of request IDs merged into this turn
-                
+
                 -- Response time fields (nullable, for assistant turns)
-                responding_to_turn INTEGER,  -- Turn number of user message this assistant turn responds to
-                response_time_ms INTEGER,    -- Time from user message to this assistant turn (milliseconds)
-                
+                responding_to_turn INTEGER,
+                response_time_ms INTEGER,
+
                 -- Aggregated code metrics (nullable, calculated from code_edits)
                 total_lines_added INTEGER,
                 total_lines_removed INTEGER,
                 total_nloc_change INTEGER,
                 weighted_complexity_change REAL,
-                
+
+                -- Session relationship tracking (subagent / fork sessions)
+                parent_session_id TEXT,
+                relationship_type TEXT,
+
                 UNIQUE(session_id, turn)
             )
         """)
-    
+
+    # Forward migrations: add columns that may be missing from older databases
+    _add_column_if_missing(conn, "turns", "parent_session_id", "TEXT")
+    _add_column_if_missing(conn, "turns", "relationship_type", "TEXT")
+
     # Create indexes for common queries
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_workspace_id ON turns(workspace_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_session_id ON turns(session_id)")
@@ -218,17 +242,43 @@ def ensure_turns_table(conn: sqlite3.Connection) -> None:
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_responding_to ON turns(responding_to_turn)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_turns_session_responding_role ON turns(session_id, responding_to_turn, role)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_response_time ON turns(response_time_ms) WHERE response_time_ms IS NOT NULL")
-    # Composite indexes for common time-series queries (dashboards)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_turns_role_timestamp ON turns(role, timestamp_ms)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_turns_role_response_time ON turns(role, response_time_ms)")
-    # Composite indexes for performance (COUNT DISTINCT queries)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_turns_workspace ON turns(workspace_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_turns_workspace_session ON turns(workspace_id, session_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_turns_session_turn_role ON turns(session_id, turn, role)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_turns_session_turn_role_model ON turns(session_id, turn, role, model_id)")
-    
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_turns_parent_session ON turns(parent_session_id)")
+
     conn.commit()
     logger.debug("Ensured turns table exists")
+
+
+def ensure_session_file_meta_table(conn: sqlite3.Connection) -> None:
+    """Create session_file_meta table if it doesn't exist.
+
+    Tracks per-file parse state for incremental (offset-based) JSONL reading.
+    """
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS session_file_meta (
+            session_id TEXT NOT NULL,
+            agent TEXT NOT NULL,
+            file_path TEXT NOT NULL,
+            file_size INTEGER NOT NULL,
+            last_offset INTEGER NOT NULL DEFAULT 0,
+            message_count INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (session_id, agent)
+        )
+    """)
+    _add_column_if_missing(conn, "session_file_meta", "file_path", "TEXT NOT NULL DEFAULT ''")
+    _add_column_if_missing(conn, "session_file_meta", "file_size", "INTEGER NOT NULL DEFAULT 0")
+    _add_column_if_missing(conn, "session_file_meta", "last_offset", "INTEGER NOT NULL DEFAULT 0")
+    _add_column_if_missing(conn, "session_file_meta", "message_count", "INTEGER NOT NULL DEFAULT 0")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_sfm_file_path ON session_file_meta(file_path)")
+    conn.commit()
+    logger.debug("Ensured session_file_meta table exists")
 
 
 def ensure_turns_fts_table(conn: sqlite3.Connection) -> None:

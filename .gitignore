@@ -64,6 +64,7 @@ output_*/
 *.md.bundle
 
 # Data and run files
+__backup/
 data/
 tmp/
 .cache/
@@ -119,5 +120,6 @@ command.md
 command.txt
 tasks.md
 tasks.txt
+__my/
 __ref*/
 __my*/

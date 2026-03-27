@@ -6,10 +6,13 @@ Handles persisting extracted workspace data to the database.
 import time
 from pathlib import Path
 
+from typing import cast, List
+
 from src.shared.database.db_extract import upsert_workspace_info, upsert_metrics, upsert_turns, delete_workspace_extraction
 from src.shared.database.db_schema import init_shared_db
 from src.shared.code.loc_counter import count_loc_safe
 from src.shared.logging.logger import get_logger
+from src.shared.models.turn import EnrichedTurn
 from src.shared.models.workspace import WorkspaceExtractionResult
 from src.shared.models.workspace import ExtractedWorkspace
 from src.shared.config.config_loader import get_config
@@ -78,7 +81,7 @@ def store_extraction_result(
             cursor.execute("SELECT COALESCE(MAX(id), 0) FROM turns")
             min_turn_id = cursor.fetchone()[0] + 1
             
-            inserted_count = upsert_turns(conn, extraction_result.turns)
+            inserted_count = upsert_turns(conn, cast(List[EnrichedTurn], extraction_result.turns))
             
             cursor.execute("SELECT COALESCE(MAX(id), 0) FROM turns")
             max_turn_id = cursor.fetchone()[0]

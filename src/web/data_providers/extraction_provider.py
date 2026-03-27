@@ -11,13 +11,16 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 
 def _normalize_folder(folder: str) -> str:
-    """Normalize folder path for case-insensitive comparison."""
-    return Path(folder).as_posix().lower() if folder else ""
+    """Normalize folder path for case-insensitive comparison.
+
+    Uses ``str.replace`` instead of ``Path.as_posix()`` so that URI-style
+    paths (e.g. ``vscode-remote://wsl+…``) are not mangled (``://`` → ``:/``).
+    """
+    return folder.replace("\\", "/").lower() if folder else ""
 
 
 class ExtractionDataProvider:
@@ -396,6 +399,8 @@ class ExtractionDataProvider:
             top_model_ids = [r[0] for r in cur.fetchall() if r and r[0]]
         except sqlite3.OperationalError:
             top_model_ids = []
+
+        return {}
 
     def get_agentic_coding_time_stats(self) -> Dict[str, Any]:
         """Get aggregated agentic coding time for this workspace.

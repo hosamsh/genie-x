@@ -4,6 +4,8 @@ Note: This test dynamically discovers available workspaces rather than
 relying on hardcoded IDs, making it portable across different environments.
 """
 
+import logging
+
 import pytest
 import re
 from tests.integration.conftest import (
@@ -13,6 +15,8 @@ from tests.integration.conftest import (
     count_table_rows,
 )
 from src.shared.io.run_dir import get_db_path
+
+logger = logging.getLogger(__name__)
 
 
 # Note: We no longer use hardcoded workspace IDs.
@@ -76,30 +80,30 @@ def test_extract_two_workspaces():
     
     db_path = get_db_path(run_dir)
     assert db_path.exists(), f"Database file {db_path.name} was not created"
-    print(f"✓ Database created at {db_path}")
+    logger.info("Database created at %s", db_path)
     
     # 1. Verify workspace_info table contains expected workspaces
     ws_count = count_table_rows(run_dir, "workspace_info")
     assert ws_count >= 1, f"Expected at least 1 workspace, got {ws_count}"
-    print(f"✓ workspace_info contains {ws_count} workspaces")
+    logger.info("workspace_info contains %d workspaces", ws_count)
     
     # 2. Verify turns table has entries
     turns_count = count_table_rows(run_dir, "turns")
     assert turns_count >= 1, f"Expected at least 1 turn, got {turns_count}"
-    print(f"✓ turns table contains {turns_count} entries")
+    logger.info("turns table contains %d entries", turns_count)
     
     # 3. Verify code_metrics table exists and has structure
     try:
         metrics_count = count_table_rows(run_dir, "code_metrics")
-        print(f"✓ code_metrics table contains {metrics_count} entries")
+        logger.info("code_metrics table contains %d entries", metrics_count)
     except Exception as e:
-        print(f"⚠ code_metrics table check failed: {e}")
+        logger.warning("code_metrics table check failed: %s", e)
     
     # 4. Verify combined_turns view exists
     try:
         combined_count = count_table_rows(run_dir, "combined_turns")
-        print(f"✓ combined_turns view contains {combined_count} records")
+        logger.info("combined_turns view contains %d records", combined_count)
     except Exception as e:
-        print(f"⚠ combined_turns view check failed: {e}")
+        logger.warning("combined_turns view check failed: %s", e)
     
-    print(f"\n✅ Extraction test passed with {len(workspace_ids_to_extract)} workspace(s)!")
+    logger.info("Extraction test passed with %d workspace(s)", len(workspace_ids_to_extract))

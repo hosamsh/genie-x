@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "gennie-x"
+name = "genie-x"
 # Version is defined in src/__version__.py - single source of truth
 description = "Extract and analyze Copilot/Cursor chat sessions"
 requires-python = ">=3.11"
@@ -48,8 +48,8 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/hosamsh/gennie-x"
-Repository = "https://github.com/hosamsh/gennie-x"
+Homepage = "https://github.com/hosamsh/genie-x"
+Repository = "https://github.com/hosamsh/genie-x"
 
 [tool.setuptools.dynamic]
 version = {attr = "src.__version__.__version__"}
@@ -102,6 +102,9 @@ ignore = [
 # Allow fix for all enabled rules (when `--fix`) is provided.
 fixable = ["ALL"]
 unfixable = []
+
+[tool.ty.src]
+exclude = ["src/shared/text/text-line-classifier/"]
 
 [tool.pyright]
 include = ["src"]

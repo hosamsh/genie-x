@@ -47,11 +47,14 @@ def test_list_workspaces_json_output(cli_runner, make_test_config, copilot_works
     assert isinstance(workspaces, list)
     assert len(workspaces) >= 1
     
+    # Find the workspace matching our fixture (others may appear from auto-discovery)
+    matching = [w for w in workspaces if w["workspace_id"] == copilot_workspace["workspace_id"]]
+    assert len(matching) == 1, f"Expected fixture workspace not found in {[w['workspace_id'] for w in workspaces]}"
+    workspace = matching[0]
+
     # Check workspace object structure
-    workspace = workspaces[0]
     assert "workspace_id" in workspace
     assert "name" in workspace
-    assert workspace["workspace_id"] == copilot_workspace["workspace_id"]
 
 
 def test_list_workspaces_empty_state(cli_runner, make_test_config):

@@ -60,14 +60,14 @@ class WebConfig:
     """Configuration for the web application."""
     run_dir: str = "data/web"
     port: int = 8000
-    db_filename: str = "gennie.db"
+    db_filename: str = "genie.db"
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "WebConfig":
         return cls(
             run_dir=data.get("run_dir", "data/web"),
             port=data.get("port", 8000),
-            db_filename=data.get("db_filename", "gennie.db"),
+            db_filename=data.get("db_filename", "genie.db"),
         )
 
 

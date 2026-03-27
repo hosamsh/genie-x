@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Sequence, Union
 
 from .dataclass_mixin import DataclassIO
 from .turn import Turn, EnrichedTurn
@@ -71,6 +71,7 @@ class WorkspaceInfo(DataclassIO):
             "workspace_folder": self.workspace_folder,
             "agents": self.agents,
             "session_count": self.session_count,
+            "turn_count": self.turn_count,
             "status": status_info,
             "source_available": self.source_available,
         }
@@ -109,7 +110,7 @@ class ExtractedWorkspace:
     This is returned by both individual agent extractors and the
     workspace_operations.extract_workspace() orchestrator.
     """
-    turns: List[Union[Turn, EnrichedTurn]]
+    turns: Sequence[Union[Turn, EnrichedTurn]]
     session_count: int
     agent_name: str
     workspace_id: str = ""

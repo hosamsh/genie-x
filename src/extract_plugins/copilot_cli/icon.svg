@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1200" viewBox="0 0 1200 1200" fill="none">
+  <!-- Background -->
+  <rect width="1200" height="1200" rx="150" fill="#1B1F23"/>
+  <!-- Terminal window frame -->
+  <rect x="200" y="250" width="800" height="550" rx="40" fill="#2D333B" stroke="#4FAAFF" stroke-width="8"/>
+  <!-- Terminal title bar -->
+  <rect x="200" y="250" width="800" height="80" rx="40" fill="#3A414A"/>
+  <rect x="200" y="290" width="800" height="40" fill="#3A414A"/>
+  <!-- Window dots -->
+  <circle cx="270" cy="290" r="16" fill="#FF5F56"/>
+  <circle cx="320" cy="290" r="16" fill="#FFBD2E"/>
+  <circle cx="370" cy="290" r="16" fill="#27C93F"/>
+  <!-- Copilot glasses/visor -->
+  <ellipse cx="480" cy="540" rx="100" ry="60" fill="none" stroke="#4FAAFF" stroke-width="16" stroke-linecap="round"/>
+  <ellipse cx="720" cy="540" rx="100" ry="60" fill="none" stroke="#4FAAFF" stroke-width="16" stroke-linecap="round"/>
+  <!-- Bridge -->
+  <path d="M580 530 Q600 500 620 530" stroke="#4FAAFF" stroke-width="16" stroke-linecap="round" fill="none"/>
+  <!-- Pupils -->
+  <ellipse cx="480" cy="545" rx="35" ry="25" fill="#4FAAFF" fill-opacity="0.6"/>
+  <ellipse cx="720" cy="545" rx="35" ry="25" fill="#4FAAFF" fill-opacity="0.6"/>
+  <!-- CLI prompt -->
+  <text x="340" y="700" font-family="monospace" font-size="64" fill="#4FAAFF" font-weight="bold">&gt;_</text>
+  <!-- Label -->
+  <text x="600" y="960" font-family="sans-serif" font-size="72" fill="#8B949E" text-anchor="middle" font-weight="600">COPILOT CLI</text>
+</svg>

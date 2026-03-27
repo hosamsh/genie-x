@@ -5,12 +5,15 @@ import json
 import os
 import platform
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
 from src.shared.models.turn import Turn
-from src.shared.io.paths import normalize_path, decode_file_uri
+from src.shared.io.paths import normalize_path, decode_file_uri, is_valid_session_id
+from src.shared.logging.logger import get_logger
+
+logger = get_logger(__name__)
 
 from .edits import extract_edits
 
@@ -26,6 +29,17 @@ def get_workspace_storage() -> Path:
         return Path.home() / ".config/Code/User/workspaceStorage"
 
 
+def get_global_storage() -> Path:
+    """Get VS Code global storage path for current platform."""
+    system = platform.system()
+    if system == "Windows":
+        return Path(os.environ.get("APPDATA", "")) / "Code/User/globalStorage"
+    elif system == "Darwin":
+        return Path.home() / "Library/Application Support/Code/User/globalStorage"
+    else:
+        return Path.home() / ".config/Code/User/globalStorage"
+
+
 @dataclass
 class WorkspaceMeta:
     """Workspace metadata."""
@@ -34,6 +48,23 @@ class WorkspaceMeta:
     workspace_folder: str
     path: Path
     titles: dict[str, str]  # session_id -> title
+    # When set, overrides the default ``path / "chatSessions"`` lookup so that
+    # global-storage sessions (emptyWindowChatSessions, transferredChatSessions)
+    # can reuse the same extraction pipeline.
+    chat_sessions_dir: Path | None = field(default=None)
+
+
+def _resolve_session_files(chat_dir: Path) -> list[Path]:
+    """Return all session files in *chat_dir*, preferring `.jsonl` over `.json` for the same stem.
+
+    When both ``session.json`` and ``session.jsonl`` exist, only the `.jsonl`
+    file is returned so callers never process the same session twice.
+    """
+    jsonl_by_stem = {p.stem: p for p in chat_dir.glob("*.jsonl")}
+    json_by_stem  = {p.stem: p for p in chat_dir.glob("*.json")}
+    # Merge: .jsonl wins on collision
+    merged = {**json_by_stem, **jsonl_by_stem}
+    return list(merged.values())
 
 
 def discover_workspaces(base: Path | None = None) -> list[WorkspaceMeta]:
@@ -51,8 +82,8 @@ def discover_workspaces(base: Path | None = None) -> list[WorkspaceMeta]:
         if not chat_dir.exists():
             continue
         
-        # Check for non-empty sessions
-        sessions = list(chat_dir.glob("*.json"))
+        # Check for non-empty sessions (both .json and .jsonl)
+        sessions = _resolve_session_files(chat_dir)
         if not sessions:
             continue
         
@@ -67,14 +98,205 @@ def discover_workspaces(base: Path | None = None) -> list[WorkspaceMeta]:
     return workspaces
 
 
+def discover_global_sessions(base: Path | None = None) -> list[WorkspaceMeta]:
+    """Discover Copilot chat sessions in VS Code global storage.
+
+    Scans two well-known sub-directories of *globalStorage*:
+
+    * ``emptyWindowChatSessions`` – sessions started without an open folder
+    * ``transferredChatSessions`` – sessions migrated from workspace storage
+
+    Each non-empty directory is surfaced as a synthetic :class:`WorkspaceMeta`
+    with ``workspace_id = "globalStorage/<subdir_name>"``.
+
+    Args:
+        base: Override the default global storage root (used in tests).
+
+    Returns:
+        List of :class:`WorkspaceMeta` instances for discovered global sessions.
+    """
+    base = base or get_global_storage()
+    workspaces = []
+
+    for subdir_name in ("emptyWindowChatSessions", "transferredChatSessions"):
+        chat_dir = base / subdir_name
+        if not chat_dir.exists() or not chat_dir.is_dir():
+            continue
+
+        sessions = _resolve_session_files(chat_dir)
+        if not sessions:
+            continue
+
+        has_content = any(not _is_empty_session(s) for s in sessions)
+        if not has_content:
+            continue
+
+        workspace_id = f"globalStorage/{subdir_name}"
+        workspace_name = "empty-window" if subdir_name == "emptyWindowChatSessions" else "transferred"
+        workspaces.append(WorkspaceMeta(
+            workspace_id=workspace_id,
+            workspace_name=workspace_name,
+            workspace_folder="",
+            path=base,
+            titles={},
+            chat_sessions_dir=chat_dir,
+        ))
+
+    return workspaces
+
+
 def _is_empty_session(path: Path) -> bool:
-    """Quick check if session has no requests (read first 2KB)."""
+    """Quick check if session has no requests (reads first 2 KB for .json, full file for .jsonl)."""
     try:
+        if path.suffix == ".jsonl":
+            return _is_empty_jsonl_session(path)
         with open(path, "r", encoding="utf-8") as f:
             head = f.read(2048)
         return '"requests": []' in head or '"requests":[]' in head
     except:
         return True
+
+
+def _is_empty_jsonl_session(path: Path) -> bool:
+    """Return True when every line of a JSONL session file is blank."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    return False
+        return True
+    except (OSError, UnicodeDecodeError):
+        return True
+
+
+def _parse_jsonl_session(path: Path) -> dict:
+    """Parse a JSONL session file into the standard session dict structure.
+
+    Handles two formats:
+
+    1. **VS Code state-store delta log** – detected when the first parsed
+       line contains a ``kind`` key.  Operations: ``kind=0`` (initial
+       snapshot), ``kind=1`` (set at key-path), ``kind=2`` (append to
+       array at key-path).  The deltas are replayed to reconstruct the
+       full session dict.
+
+    2. **Legacy request-per-line** – each non-empty line is a JSON object
+       representing either session metadata (``version`` present,
+       ``requestId`` absent) or a request.
+
+    Returns:
+        ``{"requests": [...], ...}`` or ``{}`` on I/O error.
+    """
+    lines: list[dict] = []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for raw in f:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    obj = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(obj, dict):
+                    lines.append(obj)
+    except OSError:
+        return {}
+
+    if not lines:
+        return {"requests": []}
+
+    # Detect delta format: first line has a "kind" key
+    if "kind" in lines[0]:
+        return _reconstruct_delta_session(lines)
+
+    # Legacy: request-per-line format
+    session_meta: dict = {}
+    requests: list[dict] = []
+    for i, obj in enumerate(lines):
+        if i == 0 and "version" in obj and "requestId" not in obj:
+            session_meta = obj
+        else:
+            requests.append(obj)
+    return {**session_meta, "requests": requests}
+
+
+def _apply_delta(state: dict, key_path: list, value: object, kind: int) -> None:
+    """Apply a single delta operation to *state* in-place.
+
+    Args:
+        state: The session dict being built.
+        key_path: Array of keys/indices describing the target location.
+        value: The value to set (kind=1) or list of items to append (kind=2).
+        kind: 1 for set, 2 for append.
+    """
+    if not key_path:
+        return
+
+    # Navigate to the parent container
+    container: object = state
+    for key in key_path[:-1]:
+        if isinstance(key, int) and isinstance(container, list):
+            while len(container) <= key:
+                container.append({})
+            container = container[key]
+        elif isinstance(container, dict):
+            if key not in container:
+                container[key] = {}
+            container = container[key]
+        else:
+            return  # unreachable path – skip silently
+
+    final_key = key_path[-1]
+
+    if kind == 1:  # set
+        if isinstance(final_key, int) and isinstance(container, list):
+            while len(container) <= final_key:
+                container.append({})
+            container[final_key] = value
+        elif isinstance(container, dict):
+            container[final_key] = value
+
+    elif kind == 2:  # append
+        if isinstance(final_key, int) and isinstance(container, list):
+            while len(container) <= final_key:
+                container.append({})
+            target = container[final_key]
+            if isinstance(target, list) and isinstance(value, list):
+                target.extend(value)
+        elif isinstance(container, dict):
+            if final_key not in container:
+                container[final_key] = []
+            target = container[final_key]
+            if isinstance(target, list) and isinstance(value, list):
+                target.extend(value)
+
+
+def _reconstruct_delta_session(lines: list[dict]) -> dict:
+    """Reconstruct a full session dict from VS Code state-store delta lines.
+
+    The first line (``kind=0``) supplies the initial snapshot via its ``v``
+    field.  Subsequent lines carry ``kind=1`` (set) or ``kind=2`` (append)
+    operations, each with a ``k`` key-path and ``v`` value.
+    """
+    first = lines[0]
+    state: dict = first.get("v", {}) if first.get("kind") == 0 else {}
+
+    for op in lines[1:]:
+        kind = op.get("kind")
+        if kind not in (1, 2):
+            continue
+        key_path = op.get("k", [])
+        value = op.get("v")
+        if not key_path:
+            continue
+        _apply_delta(state, key_path, value, kind)
+
+    # Ensure there is always a "requests" key
+    if "requests" not in state:
+        state["requests"] = []
+
+    return state
 
 
 def _load_workspace_meta(folder: Path) -> WorkspaceMeta:
@@ -130,13 +352,19 @@ def _load_session_titles(db_path: Path) -> dict[str, str]:
 
 
 def extract_session(path: Path, meta: WorkspaceMeta) -> list[Turn]:
-    """Extract all turns from a chat session file."""
+    """Extract all turns from a chat session file (.json or .jsonl)."""
     session_id = path.stem
+    if not is_valid_session_id(session_id):
+        logger.warning("Skipping session with invalid ID derived from filename: %s", path.name)
+        return []
     if _is_empty_session(path):
         return []
     
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        if path.suffix == ".jsonl":
+            data = _parse_jsonl_session(path)
+        else:
+            data = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return []
     
@@ -474,13 +702,13 @@ def extract_workspace(meta: WorkspaceMeta) -> list[Turn]:
     """Extract all data from a single workspace, matching edits to turns."""
     turns = []
     
-    chat_dir = meta.path / "chatSessions"
+    chat_dir = meta.chat_sessions_dir if meta.chat_sessions_dir is not None else meta.path / "chatSessions"
     edits_dir = meta.path / "chatEditingSessions"
     
-    for session_file in chat_dir.glob("*.json"):
+    for session_file in _resolve_session_files(chat_dir):
         session_turns = extract_session(session_file, meta)
         
-        # Check for corresponding edit session
+        # Check for corresponding edit session (only for regular workspaces)
         edit_folder = edits_dir / session_file.stem
         if edit_folder.exists():
             session_edits = extract_edits(edit_folder)

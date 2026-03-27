@@ -13,6 +13,10 @@ from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
 from enum import Enum
 
+from src.shared.logging.logger import get_logger
+
+logger = get_logger(__name__)
+
 
 class DataSourceType(str, Enum):
     """Types of data sources for dashboard elements."""
@@ -346,7 +350,7 @@ class DashboardLoader:
             return DashboardConfig.from_dict(data, source_file=str(path))
         
         except Exception as e:
-            print(f"Error loading dashboard config from {path}: {e}")
+            logger.warning("Error loading dashboard config from %s: %s", path, e)
             return None
     
     def clear_cache(self) -> None:

@@ -13,14 +13,14 @@ from src.shared.logging.logger import get_logger
 logger = get_logger(__name__)
 
 # Default database filename
-DEFAULT_DB_FILENAME = "gennie.db"
+DEFAULT_DB_FILENAME = "genie.db"
 
 
 def get_db_filename() -> str:
     """Get the database filename from config.
     
     Returns:
-        Database filename (default: gennie.db)
+        Database filename (default: genie.db)
     """
     try:
         from src.shared.config.config_loader import get_config

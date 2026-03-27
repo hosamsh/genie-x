@@ -1,1 +1,1 @@
-"""Integration tests for gennie-x."""
+"""Integration tests for genie-x."""

@@ -1,1 +1,1 @@
-"""Test package for gennie-x."""
+"""Test package for genie-x."""

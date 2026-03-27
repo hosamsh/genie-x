@@ -217,7 +217,7 @@ def get_turns_by_session(conn: sqlite3.Connection, session_id: str) -> List[Enri
     """Get all turns for a session, ordered by turn number."""
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT 
+        SELECT
             session_id, turn, role, text, original_text,
             workspace_id, workspace_name, workspace_folder, session_name,
             agent_used, model_id, request_id,
@@ -226,12 +226,13 @@ def get_turns_by_session(conn: sqlite3.Connection, session_id: str) -> List[Enri
             thinking_tokens, primary_language, languages, files, tools,
             merged_request_ids, thinking_text, thinking_duration_ms,
             responding_to_turn, response_time_ms,
-            total_lines_added, total_lines_removed, total_nloc_change, weighted_complexity_change
+            total_lines_added, total_lines_removed, total_nloc_change, weighted_complexity_change,
+            parent_session_id, relationship_type
         FROM turns
         WHERE session_id = ?
         ORDER BY turn ASC
     """, (session_id,))
-    
+
     turns = []
     for row in cursor.fetchall():
         turn = EnrichedTurn(
@@ -270,6 +271,8 @@ def get_turns_by_session(conn: sqlite3.Connection, session_id: str) -> List[Enri
             total_lines_removed=row[32],
             total_nloc_change=row[33],
             weighted_complexity_change=row[34],
+            parent_session_id=row[35],
+            relationship_type=row[36],
         )
         turns.append(turn)
     return turns
@@ -325,6 +328,8 @@ def upsert_turn(conn: sqlite3.Connection, turn: EnrichedTurn) -> None:
         "total_lines_removed": turn.total_lines_removed,
         "total_nloc_change": turn.total_nloc_change,
         "weighted_complexity_change": turn.weighted_complexity_change,
+        "parent_session_id": turn.parent_session_id,
+        "relationship_type": turn.relationship_type,
     }
     columns = ", ".join(data.keys())
     placeholders = ", ".join(f":{k}" for k in data.keys())
@@ -334,10 +339,14 @@ def upsert_turn(conn: sqlite3.Connection, turn: EnrichedTurn) -> None:
 def upsert_turns(conn: sqlite3.Connection, turns: List[EnrichedTurn]) -> int:
     """Insert multiple turns and their code_edits. Returns count of inserted turns."""
     from src.shared.models.turn import calculate_response_times, calculate_turn_metrics
-    
+    from src.shared.database.db_schema import ensure_turns_table
+
     if not turns:
         return 0
-        
+
+    # Ensure columns exist (applies forward migrations on old databases)
+    ensure_turns_table(conn)
+
     # Calculate response times before insertion
     turns = calculate_response_times(turns)
     
@@ -695,6 +704,18 @@ def query_workspace_sessions(
     return sessions
 
 
+def _normalize_folder(folder: str) -> str:
+    """Normalize a workspace folder path for comparison.
+    
+    Handles both regular paths (C:\\code\\project) and URI-style paths
+    (vscode-remote://wsl+ubuntu/home/...) without mangling the URI scheme.
+    """
+    if not folder:
+        return ""
+    # Replace backslashes with forward slashes and lowercase
+    return folder.replace("\\", "/").lower()
+
+
 def query_workspace_sessions_by_folder(
     conn: sqlite3.Connection,
     workspace_folder: str,
@@ -715,10 +736,8 @@ def query_workspace_sessions_by_folder(
     Returns:
         List of session dicts
     """
-    from pathlib import Path
-    
-    # Normalize folder for comparison
-    normalized_folder = Path(workspace_folder).as_posix().lower() if workspace_folder else ""
+    # Normalize folder for comparison (URI-safe: don't use Path which mangles ://)
+    normalized_folder = _normalize_folder(workspace_folder)
     
     # Build agent filter - if agent is empty or 'all', don't filter
     if agent and agent.lower() not in ('all', 'unknown', ''):
@@ -832,5 +851,75 @@ def query_session_turns(conn: sqlite3.Connection, session_id: str) -> List[Dict[
             "files_edited": 0,  # Would need code_metrics table
             "code_edits": [],  # Would need code_metrics table
         })
-    
+
     return turns
+
+
+# =============================================================================
+# Session file meta (incremental parse support)
+# =============================================================================
+
+def get_session_file_meta(
+    conn: sqlite3.Connection,
+    session_id: str,
+    agent: str,
+) -> Optional[Dict[str, Any]]:
+    """Return stored meta for a session file, or None if not recorded yet."""
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT file_path, file_size, last_offset, message_count, updated_at
+        FROM session_file_meta
+        WHERE session_id = ? AND agent = ?
+        """,
+        (session_id, agent),
+    )
+    row = cursor.fetchone()
+    if not row:
+        return None
+    return {
+        "file_path": row[0] or "",
+        "file_size": row[1] or 0,
+        "last_offset": row[2] or 0,
+        "message_count": row[3] or 0,
+        "updated_at": row[4] or "",
+    }
+
+
+def upsert_session_file_meta(
+    conn: sqlite3.Connection,
+    session_id: str,
+    agent: str,
+    file_path: str,
+    file_size: int,
+    last_offset: int,
+    message_count: int = 0,
+) -> None:
+    """Record or update the parse position for a session file."""
+    from datetime import datetime
+
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO session_file_meta
+            (session_id, agent, file_path, file_size, last_offset, message_count, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(session_id, agent)
+        DO UPDATE SET
+            file_path = excluded.file_path,
+            file_size = excluded.file_size,
+            last_offset = excluded.last_offset,
+            message_count = excluded.message_count,
+            updated_at = excluded.updated_at
+        """,
+        (
+            session_id,
+            agent,
+            file_path,
+            file_size,
+            last_offset,
+            message_count,
+            datetime.now().isoformat(),
+        ),
+    )
+    conn.commit()

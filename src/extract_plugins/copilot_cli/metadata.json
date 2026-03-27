@@ -1,0 +1,7 @@
+{
+  "name": "Copilot CLI",
+  "display_name": "GitHub Copilot CLI",
+  "icon": "icon.svg",
+  "color": "bg-sky-900 text-sky-400",
+  "description": "GitHub Copilot CLI agent session extraction"
+}

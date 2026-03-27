@@ -75,6 +75,8 @@ def _get_classifier():
         model_dir / "features.py",
         submodule_search_locations=[model_dir_str]
     )
+    if features_spec is None or features_spec.loader is None:
+        raise ImportError(f"Cannot load features module from {model_dir}")
     features_module = importlib.util.module_from_spec(features_spec)
     sys.modules["model"] = type(sys)("model")
     sys.modules["model.features"] = features_module
@@ -87,6 +89,8 @@ def _get_classifier():
         model_dir / "classifier.py",
         submodule_search_locations=[model_dir_str]
     )
+    if classifier_spec is None or classifier_spec.loader is None:
+        raise ImportError(f"Cannot load classifier module from {model_dir}")
     classifier_module = importlib.util.module_from_spec(classifier_spec)
     sys.modules["model.classifier"] = classifier_module
     classifier_spec.loader.exec_module(classifier_module)

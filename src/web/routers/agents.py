@@ -1,6 +1,7 @@
 """Agent metadata and icon serving endpoints."""
 
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
@@ -27,7 +28,7 @@ async def get_agents():
         
         result = []
         for agent in agents:
-            agent_data = {
+            agent_data: dict[str, Any] = {
                 "id": agent,
                 "name": agent,
                 "has_icon": get_agent_icon_path(agent) is not None,
@@ -35,7 +36,7 @@ async def get_agents():
             
             # Add metadata if available
             if agent in metadata:
-                agent_data.update(metadata[agent])
+                agent_data.update(dict(metadata[agent]))
             
             result.append(agent_data)
         

@@ -995,7 +995,7 @@ class SystemDataProvider:
         # Convert to list format with all top languages for each date
         results: List[Dict[str, Any]] = []
         for date in sorted(date_data.keys()):
-            row = {"date": date}
+            row: Dict[str, Any] = {"date": date}
             for lang in top_languages:
                 row[lang] = date_data[date].get(lang, 0)
             results.append(row)

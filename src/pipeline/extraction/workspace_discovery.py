@@ -5,7 +5,6 @@ Handles finding, listing, and merging workspace information from different agent
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from src.shared.logging.logger import get_logger
@@ -42,13 +41,15 @@ def get_all_workspace_folders() -> Set[str]:
     
     for agent_name in list_registered_agents():
         ExtractorClass = get_extractor_class(agent_name)
+        if ExtractorClass is None:
+            continue
         try:
             extractor = ExtractorClass.create("__scan__")
             workspaces = extractor.scan_workspaces()
             for ws in workspaces:
                 if ws.workspace_folder:
                     # Normalize: lowercase POSIX path
-                    normalized = Path(ws.workspace_folder).as_posix().lower()
+                    normalized = ws.workspace_folder.replace("\\", "/").lower()
                     folders.add(normalized)
         except Exception:
             continue
@@ -69,7 +70,7 @@ def is_workspace_folder(path: str) -> bool:
     if not path:
         return False
     
-    normalized = Path(path).as_posix().lower()
+    normalized = path.replace("\\", "/").lower()
     all_folders = get_all_workspace_folders()
     return normalized in all_folders
 
@@ -85,6 +86,9 @@ def list_all_workspaces() -> List[WorkspaceInfo]:
     agent_workspaces: Dict[str, List[WorkspaceInfo]] = {}
     for agent_name in list_registered_agents():
         ExtractorClass = get_extractor_class(agent_name)
+        if ExtractorClass is None:
+            agent_workspaces[agent_name] = []
+            continue
         try:
             extractor = ExtractorClass.create("__scan__")
             workspaces = extractor.scan_workspaces()
@@ -130,6 +134,9 @@ def find_workspace(workspace_id: str) -> Optional[WorkspaceInfo]:
     all_agent_workspaces: Dict[str, List[WorkspaceInfo]] = {}
     for agent_name in list_registered_agents():
         ExtractorClass = get_extractor_class(agent_name)
+        if ExtractorClass is None:
+            all_agent_workspaces[agent_name] = []
+            continue
         try:
             extractor = ExtractorClass.create("__scan__")
             all_agent_workspaces[agent_name] = extractor.scan_workspaces()
@@ -147,13 +154,13 @@ def find_workspace(workspace_id: str) -> Optional[WorkspaceInfo]:
     
     # Second pass: find other agents with same folder (using cached results)
     if matches and target_folder:
-        normalized_target = Path(target_folder).as_posix().lower()
+        normalized_target = target_folder.replace("\\", "/").lower()
         for agent_name, workspaces in all_agent_workspaces.items():
             if agent_name in matches:
                 continue
             for ws in workspaces:
                 if ws.workspace_folder:
-                    if Path(ws.workspace_folder).as_posix().lower() == normalized_target:
+                    if ws.workspace_folder.replace("\\", "/").lower() == normalized_target:
                         matches[agent_name] = ws
                         agent_workspace_ids[agent_name] = ws.workspace_id
                         break
@@ -186,6 +193,9 @@ def get_workspace_latest_stats(workspace_id: str) -> Dict[str, Optional[Workspac
     stats = {}
     for agent_name in list_registered_agents():
         ExtractorClass = get_extractor_class(agent_name)
+        if ExtractorClass is None:
+            stats[agent_name] = None
+            continue
         try:
             extractor = ExtractorClass.create(workspace_id)
             stats[agent_name] = extractor.get_latest_activity()
@@ -240,7 +250,7 @@ def _merge_workspaces(agent_workspaces: Dict[str, List[WorkspaceInfo]]) -> List[
             continue
         
         # Normalize folder for comparison
-        normalized_folder = Path(folder).as_posix().lower()
+        normalized_folder = folder.replace("\\", "/").lower()
         
         if normalized_folder not in by_folder:
             # First workspace with this folder - use its ID

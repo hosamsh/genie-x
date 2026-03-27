@@ -5,15 +5,18 @@ Performance Timer - Simple timing utilities for debugging and profiling.
 from __future__ import annotations
 
 import time
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from src.shared.logging.logger import get_logger
+
+if TYPE_CHECKING:
+    from src.shared.logging.logger import PipelineLogger
 
 
 class PerfTimer:
     """Simple performance timer for logging request durations."""
 
-    def __init__(self, name: str, logger: Optional[object] = None):
+    def __init__(self, name: str, logger: Optional["PipelineLogger"] = None):
         self.name = name
         self.start = time.perf_counter()
         self.checkpoints: list[tuple[str, float]] = []

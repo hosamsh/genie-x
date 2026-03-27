@@ -51,13 +51,19 @@ extract:
     # claude_dir: "${HOME}/.claude"
     output_dir: "./output/extract"
 
+  copilot_cli:
+    # GitHub Copilot CLI session-state directory
+    # OPTIONAL: If omitted, auto-detected as ~/.copilot/session-state (all platforms)
+    # session_state_dir: "${HOME}/.copilot/session-state"
+    output_dir: "./output/extract"
+
 web:
   # Web UI settings
   run_dir: "./data/web"
   # Port for the web server
   port: 8000
   # Database filename (stored in run_dir)
-  db_filename: "gennie.db"
+  db_filename: "genie.db"
 
 search:
   # Search behavior and thresholds

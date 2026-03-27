@@ -12,10 +12,15 @@ from src.extract_plugins.agent_extractor import (
 from src.shared.models.workspace import WorkspaceInfo
 
 # Import the consolidated implementation
+from src.shared.io.paths import is_valid_session_id
+
 from .extractor import (
-    discover_workspaces, 
-    extract_workspace, 
-    WorkspaceMeta, 
+    _resolve_session_files,
+    discover_global_sessions,
+    discover_workspaces,
+    extract_workspace,
+    get_global_storage,
+    WorkspaceMeta,
 )
 
 
@@ -46,7 +51,7 @@ class CopilotExtractor(AgentExtractor):
             if ws_path:
                 storage_path = Path(ws_path)
         
-        workspaces = discover_workspaces(base=storage_path)
+        workspaces = discover_workspaces(base=storage_path) + discover_global_sessions(base=get_global_storage())
         
         result = []
         for meta in workspaces:
@@ -54,8 +59,8 @@ class CopilotExtractor(AgentExtractor):
             self._workspace_cache[meta.workspace_id] = meta
             
             # Count sessions
-            chat_dir = meta.path / "chatSessions"
-            session_count = len(list(chat_dir.glob("*.json"))) if chat_dir.exists() else 0
+            chat_dir = meta.chat_sessions_dir if meta.chat_sessions_dir is not None else meta.path / "chatSessions"
+            session_count = len(_resolve_session_files(chat_dir)) if chat_dir.exists() else 0
             
             result.append(WorkspaceInfo(
                 workspace_id=meta.workspace_id,
@@ -96,15 +101,18 @@ class CopilotExtractor(AgentExtractor):
         if not meta:
             return None
         
-        chat_dir = meta.path / "chatSessions"
+        chat_dir = meta.chat_sessions_dir if meta.chat_sessions_dir is not None else meta.path / "chatSessions"
         if not chat_dir.exists():
             return None
         
         session_ids = []
         turn_count = 0
         
-        for session_file in chat_dir.glob("*.json"):
-            session_ids.append(session_file.stem)
+        for session_file in _resolve_session_files(chat_dir):
+            sid = session_file.stem
+            if not is_valid_session_id(sid):
+                continue
+            session_ids.append(sid)
             # Quick estimate: read file and count "role" occurrences
             try:
                 content = session_file.read_text(encoding="utf-8")
@@ -139,7 +147,7 @@ class CopilotExtractor(AgentExtractor):
                 storage_path = Path(ws_path)
         
         # Discover all workspaces and find ours
-        for meta in discover_workspaces(base=storage_path):
+        for meta in discover_workspaces(base=storage_path) + discover_global_sessions(base=get_global_storage()):
             self._workspace_cache[meta.workspace_id] = meta
             if meta.workspace_id == self.workspace_id:
                 self._meta = meta

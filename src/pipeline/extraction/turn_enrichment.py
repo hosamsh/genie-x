@@ -1,12 +1,13 @@
 """Converts raw Turns to enriched Turns with tokens, languages, metrics, and cleaned text."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Union
 
 from src.shared.models.turn import Turn, CodeEdit, EnrichedTurn, calculate_turn_metrics, calculate_response_times
 from src.shared.code.code_metrics import calculate_metrics, count_diff_lines
 from src.shared.code.language_utils import detect_languages_from_files
+from src.shared.code.tool_taxonomy import normalize_tool_category
 from src.shared.llm.token_utils import estimate_tokens, estimate_tool_tokens
 from src.shared.llm.model_names import normalize_model_id
 from src.shared.text.text_shrinker import TextShrinker
@@ -64,7 +65,7 @@ def _resolve_model_fallback(agent_used: Optional[str], timestamp_ms: Optional[in
     # Try timeline lookup if we have a timestamp
     timeline = agent_config.get("timeline", {})
     if timeline and timestamp_ms:
-        turn_date = datetime.utcfromtimestamp(timestamp_ms / 1000).strftime("%Y-%m-%d")
+        turn_date = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
         
         # Find the most recent timeline entry before or on the turn date
         matching_model = None
@@ -159,6 +160,43 @@ def _detect_languages_from_code_edits(code_edits: List[CodeEdit]) -> List[str]:
     return sorted(languages)
 
 
+def _compute_tool_categories(tools: List[str]) -> List[str]:
+    """Return a sorted, deduplicated list of canonical tool categories for a turn's tools."""
+    return sorted({normalize_tool_category(t) for t in tools if t})
+
+
+def _resolve_token_counts(
+    base: Turn,
+    cleaned_text: str,
+) -> tuple[int, int]:
+    """Resolve original and cleaned token counts, preferring source counts when present."""
+    extra: Dict[str, Any] = base.extra or {}
+
+    raw_output = extra.get("source_output_tokens")
+    raw_input = extra.get("source_input_tokens")
+    source_tokens: Optional[int] = None
+
+    if base.role == "assistant" and raw_output is not None:
+        source_tokens = int(raw_output)
+    elif base.role == "user" and raw_input is not None:
+        source_tokens = int(raw_input)
+
+    if source_tokens is not None:
+        original_text_tokens: int = source_tokens
+        if cleaned_text:
+            estimated_cleaned = estimate_tokens(cleaned_text)
+            estimated_original = estimate_tokens(base.original_text) if base.original_text else 1
+            ratio = estimated_cleaned / max(estimated_original, 1)
+            cleaned_text_tokens: int = min(int(original_text_tokens * ratio), original_text_tokens)
+        else:
+            cleaned_text_tokens = 0
+    else:
+        original_text_tokens = estimate_tokens(base.original_text) if base.original_text else 0
+        cleaned_text_tokens = estimate_tokens(cleaned_text) if cleaned_text else 0
+
+    return original_text_tokens, cleaned_text_tokens
+
+
 def enrich_turn(base: Turn) -> EnrichedTurn:
     """Convert Turn to EnrichedTurn with tokens, languages, cleaned text, and code metrics."""
     enriched_edits = []
@@ -184,7 +222,18 @@ def enrich_turn(base: Turn) -> EnrichedTurn:
     model_id = normalize_model_id(base.model_id) or base.model_id
     if not model_id:
         model_id = _resolve_model_fallback(base.agent_used, base.timestamp_ms)
-        
+
+    # Preserve all unknown fields from source; add computed fields below.
+    extra: Dict[str, Any] = dict(base.extra) if base.extra else {}
+
+    # Compute and store tool categories in extra (avoids model schema changes).
+    if base.tools:
+        tool_categories = _compute_tool_categories(base.tools)
+        if tool_categories:
+            extra["tool_categories"] = tool_categories
+
+    original_text_tokens, cleaned_text_tokens = _resolve_token_counts(base, cleaned_text)
+
     turn = EnrichedTurn(
         session_id=base.session_id,
         turn=base.turn,
@@ -203,18 +252,19 @@ def enrich_turn(base: Turn) -> EnrichedTurn:
         ts=base.ts,
         files=list(base.files),
         tools=list(base.tools),
-        extra=dict(base.extra) if base.extra else {},
+        extra=extra,
         code_edits=enriched_edits,
-        model_id=model_id,
+        model_id=model_id or "",
         languages=languages,
         primary_language=primary_language,
         thinking_text=base.thinking_text,
         thinking_duration_ms=base.thinking_duration_ms,
-        original_text_tokens=estimate_tokens(base.original_text) if base.original_text else 0,
-        cleaned_text_tokens=estimate_tokens(cleaned_text) if cleaned_text else 0,
+        original_text_tokens=original_text_tokens,
+        cleaned_text_tokens=cleaned_text_tokens,
         code_tokens=estimate_code_tokens(enriched_edits),
         tool_tokens=estimate_tool_tokens(base.tools) if base.tools else 0,
         thinking_tokens=thinking_tokens,
+        session_history_tokens=0,
     )
     
     return turn

@@ -8,6 +8,39 @@ from typing import Optional, Tuple
 from urllib.parse import unquote, urlparse
 
 
+def is_valid_session_id(session_id: str) -> bool:
+    """Return True if *session_id* contains only URL-safe identifier characters.
+
+    Accepted: A-Z, a-z, 0-9, hyphen (-), underscore (_).
+    Rejects empty strings, path separators, dots, and traversal sequences so
+    session IDs can be used safely as file-system path components.
+    """
+    if not session_id:
+        return False
+    return bool(re.match(r'^[A-Za-z0-9_\-]+$', session_id))
+
+
+def is_contained_in(path: Path, root: Path) -> bool:
+    """Return True if *path* resolves to a location inside *root*.
+
+    Both paths are fully resolved (symlinks expanded, '..' collapsed) before
+    comparison, so directory-traversal attempts such as
+    ``root / ".." / "other"`` are correctly detected and rejected.
+
+    Args:
+        path: Candidate path to validate.
+        root: Trusted root directory that must contain *path*.
+
+    Returns:
+        True when resolved *path* equals or is nested inside resolved *root*.
+    """
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
+
+
 def normalize_path(path: str) -> str:
     """Normalize path: backslashes to forward slashes, lowercase drive letter.
     

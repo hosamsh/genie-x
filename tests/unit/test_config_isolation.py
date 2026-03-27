@@ -42,7 +42,8 @@ def test_config_loader_isolation_via_cli(tmp_path):
         "extract": {
             "copilot": {"workspace_storage": str(storage_a)},
             "cursor": {"workspace_storage": str(storage_a / "cursor"), "global_storage": str(storage_a / "cursor_global")},
-            "claude_code": {"claude_dir": str(storage_a / "claude")}
+            "claude_code": {"claude_dir": str(storage_a / "claude")},
+            "copilot_cli": {"session_state_dir": str(storage_a / "copilot_cli")}
         },
         "llm_models": {},
         "model_defaults": {"enabled": False},
@@ -53,7 +54,8 @@ def test_config_loader_isolation_via_cli(tmp_path):
         "extract": {
             "copilot": {"workspace_storage": str(storage_b)},
             "cursor": {"workspace_storage": str(storage_b / "cursor"), "global_storage": str(storage_b / "cursor_global")},
-            "claude_code": {"claude_dir": str(storage_b / "claude")}
+            "claude_code": {"claude_dir": str(storage_b / "claude")},
+            "copilot_cli": {"session_state_dir": str(storage_b / "copilot_cli")}
         },
         "llm_models": {},
         "model_defaults": {"enabled": False},
@@ -115,6 +117,9 @@ def test_cli_config_flag_isolates_runs(cli_runner, tmp_path):
             },
             "claude_code": {
                 "claude_dir": str(tmp_path / "empty_claude")
+            },
+            "copilot_cli": {
+                "session_state_dir": str(tmp_path / "empty_copilot_cli")
             }
         },
         "llm_models": {},

@@ -1,3 +1,3 @@
-"""Version information for gennie-x."""
+"""Version information for genie-x."""
 
-__version__ = "0.0.1-alpha"
+__version__ = "0.0.2-alpha"
