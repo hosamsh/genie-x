@@ -4,7 +4,7 @@
 [![uv](https://img.shields.io/badge/uv-package%20manager-blueviolet)](https://github.com/astral-sh/uv) 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-> **⚠️ The bulk of this project's codebase was generated using AI coding assistants.
+> ⚠️ The bulk of this project's codebase was generated using AI coding assistants.
 
 
 ## 🔬 What is This?
@@ -21,11 +21,11 @@ Every AI coding session you run — GitHub Copilot, Cursor, Claude Code, Copilot
 
 <table>
   <tr>
-    <td width="30%" valign="top" rowspan="2"><img src="src/web/static/screenshots/Genie-x-sys-overview-screen.jpg" alt="Mission Control" /></td>
-    <td width="70%" valign="top"><img src="src/web/static/screenshots/genie-x-chat-screen.jpg" alt="Conversation Explorer" /></td>
+    <td width="30%" valign="top" rowspan="2"><img src="src/web/static/screenshots/Gennie-x-sys-overview-screen.jpg" alt="Mission Control" /></td>
+    <td width="70%" valign="top"><img src="src/web/static/screenshots/gennie-x-chat-screen.jpg" alt="Conversation Explorer" /></td>
   </tr>
   <tr>
-    <td width="70%" valign="top"><img src="src/web/static/screenshots/genie-x-search-screen.jpg" alt="Search Interface" /></td>
+    <td width="70%" valign="top"><img src="src/web/static/screenshots/gennie-x-search-screen.jpg" alt="Search Interface" /></td>
   </tr>
 </table>
 

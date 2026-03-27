@@ -1,9 +1,24 @@
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import patch
 
+import pytest
+
+from src.pipeline.extraction import turn_enrichment
 from src.pipeline.extraction.turn_enrichment import enrich_turn
 from src.shared.models.turn import Turn
+from src.shared.text.text_shrinker import TextShrinker, ShrinkConfig
+
+
+@pytest.fixture(autouse=True)
+def _isolate_text_shrinker():
+    """Provide a TextShrinker with defaults so tests don't need config/config.yaml."""
+    shrinker = TextShrinker(config=ShrinkConfig())
+    with patch.object(turn_enrichment, "_text_shrinker", shrinker):
+        yield
+    # Reset the module-level singleton after each test
+    turn_enrichment._text_shrinker = None
 
 
 def _make_turn(**kwargs: Any) -> Turn:
