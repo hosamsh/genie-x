@@ -21,7 +21,7 @@ Every AI coding session you run — GitHub Copilot, Cursor, Claude Code, Copilot
 
 <table>
   <tr>
-    <td width="30%" valign="top" rowspan="2"><img src="src/web/static/screenshots/Gennie-x-sys-overview-screen.jpg" alt="Mission Control" /></td>
+    <td width="30%" valign="top" rowspan="2"><img src="src/web/static/screenshots/gennie-x-sys-overview-screen.jpg" alt="Mission Control" /></td>
     <td width="70%" valign="top"><img src="src/web/static/screenshots/gennie-x-chat-screen.jpg" alt="Conversation Explorer" /></td>
   </tr>
   <tr>
