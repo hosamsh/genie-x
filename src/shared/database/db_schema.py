@@ -74,6 +74,8 @@ def init_shared_db(db_path: Path, verbose: bool = True) -> sqlite3.Connection:
     ensure_code_metrics_table(conn)
     ensure_workspace_info_table(conn)
     ensure_session_file_meta_table(conn)
+    ensure_parsed_tables(conn)
+    ensure_turn_detail_tables(conn)
     
     if verbose:
         cursor = conn.cursor()
@@ -182,7 +184,7 @@ def ensure_turns_table(conn: sqlite3.Connection) -> None:
                 timestamp_iso TEXT,
                 ts TEXT,
 
-                -- Token usage (unified across Copilot and Cursor)
+                -- Token usage (unified across supported agents)
                 original_text_tokens INTEGER DEFAULT 0,
                 cleaned_text_tokens INTEGER DEFAULT 0,
                 code_tokens INTEGER DEFAULT 0,
@@ -279,6 +281,246 @@ def ensure_session_file_meta_table(conn: sqlite3.Connection) -> None:
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_sfm_file_path ON session_file_meta(file_path)")
     conn.commit()
     logger.debug("Ensured session_file_meta table exists")
+
+
+def ensure_parsed_tables(conn: sqlite3.Connection) -> None:
+    """Create low-level parsed raw persistence tables if missing."""
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS parsed_workspaces (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workspace_id TEXT NOT NULL,
+            agent_name TEXT NOT NULL,
+            workspace_name TEXT,
+            workspace_folder TEXT,
+            source_root TEXT,
+            descriptor_metadata_json TEXT,
+            workspace_metadata_json TEXT,
+            issues_json TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(workspace_id, agent_name)
+        )
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS parsed_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workspace_row_id INTEGER NOT NULL,
+            session_id TEXT NOT NULL,
+            title TEXT,
+            source_path TEXT,
+            started_at_ms INTEGER,
+            ended_at_ms INTEGER,
+            parent_session_id TEXT,
+            relationship_type TEXT,
+            metadata_json TEXT,
+            issues_json TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(workspace_row_id, session_id)
+        )
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS parsed_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_row_id INTEGER NOT NULL,
+            event_index INTEGER NOT NULL,
+            event_type TEXT,
+            role TEXT,
+            timestamp_ms INTEGER,
+            timestamp_iso TEXT,
+            message_id TEXT,
+            request_id TEXT,
+            model_id TEXT,
+            text TEXT,
+            thinking_text TEXT,
+            token_usage_json TEXT,
+            command_json TEXT,
+            file_paths_json TEXT,
+            raw_json TEXT,
+            extra_json TEXT,
+            UNIQUE(session_row_id, event_index)
+        )
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS parsed_content_blocks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_row_id INTEGER NOT NULL,
+            block_index INTEGER NOT NULL,
+            kind TEXT,
+            text TEXT,
+            data_json TEXT,
+            raw_json TEXT,
+            extra_json TEXT,
+            UNIQUE(event_row_id, block_index)
+        )
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS parsed_tool_calls (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_row_id INTEGER NOT NULL,
+            call_index INTEGER NOT NULL,
+            call_id TEXT,
+            name TEXT,
+            kind TEXT,
+            arguments_json TEXT,
+            arguments_text TEXT,
+            file_paths_json TEXT,
+            spawned_session_id TEXT,
+            status TEXT,
+            raw_json TEXT,
+            extra_json TEXT,
+            UNIQUE(event_row_id, call_index)
+        )
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS parsed_tool_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_row_id INTEGER NOT NULL,
+            result_index INTEGER NOT NULL,
+            tool_call_id TEXT,
+            kind TEXT,
+            text TEXT,
+            structured_content_json TEXT,
+            is_error INTEGER,
+            status TEXT,
+            raw_json TEXT,
+            extra_json TEXT,
+            UNIQUE(event_row_id, result_index)
+        )
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS parsed_attachments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_row_id INTEGER NOT NULL,
+            attachment_index INTEGER NOT NULL,
+            kind TEXT,
+            path TEXT,
+            title TEXT,
+            media_type TEXT,
+            raw_json TEXT,
+            extra_json TEXT,
+            UNIQUE(event_row_id, attachment_index)
+        )
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS parsed_session_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_row_id INTEGER NOT NULL,
+            link_index INTEGER NOT NULL,
+            target_session_id TEXT,
+            relationship_type TEXT,
+            trigger_event_index INTEGER,
+            trigger_tool_call_id TEXT,
+            extra_json TEXT,
+            UNIQUE(session_row_id, link_index)
+        )
+        """
+    )
+
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_parsed_workspaces_agent_workspace ON parsed_workspaces(agent_name, workspace_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_parsed_sessions_workspace_row ON parsed_sessions(workspace_row_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_parsed_sessions_session_id ON parsed_sessions(session_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_parsed_events_session_row ON parsed_events(session_row_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_parsed_events_request_id ON parsed_events(request_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_parsed_events_message_id ON parsed_events(message_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_parsed_blocks_event_row ON parsed_content_blocks(event_row_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_parsed_tool_calls_event_row ON parsed_tool_calls(event_row_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_parsed_tool_results_event_row ON parsed_tool_results(event_row_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_parsed_attachments_event_row ON parsed_attachments(event_row_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_parsed_links_session_row ON parsed_session_links(session_row_id)")
+
+    conn.commit()
+    logger.debug("Ensured parsed raw tables exist")
+
+
+def ensure_turn_detail_tables(conn: sqlite3.Connection) -> None:
+    """Create materialized turn-detail tables for tool runs and subagent refs."""
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS turn_tool_calls (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workspace_id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            turn INTEGER NOT NULL,
+            tool_index INTEGER NOT NULL,
+            call_id TEXT,
+            name TEXT,
+            kind TEXT,
+            arguments_json TEXT,
+            arguments_text TEXT,
+            file_paths_json TEXT,
+            spawned_session_id TEXT,
+            status TEXT,
+            display_text TEXT,
+            results_json TEXT,
+            raw_call_json TEXT,
+            extra_json TEXT,
+            UNIQUE(session_id, turn, tool_index)
+        )
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS turn_subagent_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workspace_id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            turn INTEGER NOT NULL,
+            subagent_index INTEGER NOT NULL,
+            subagent_session_id TEXT NOT NULL,
+            source_tool_call_id TEXT,
+            source_tool_name TEXT,
+            relationship_type TEXT,
+            title TEXT,
+            prompt_text TEXT,
+            result_text TEXT,
+            turn_count INTEGER DEFAULT 0,
+            total_lines_added INTEGER DEFAULT 0,
+            total_lines_removed INTEGER DEFAULT 0,
+            started_at_ms INTEGER,
+            ended_at_ms INTEGER,
+            extra_json TEXT,
+            UNIQUE(session_id, turn, subagent_session_id)
+        )
+        """
+    )
+
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_turn_tool_calls_workspace ON turn_tool_calls(workspace_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_turn_tool_calls_session_turn ON turn_tool_calls(session_id, turn)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_turn_tool_calls_call_id ON turn_tool_calls(call_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_turn_subagent_runs_workspace ON turn_subagent_runs(workspace_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_turn_subagent_runs_session_turn ON turn_subagent_runs(session_id, turn)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_turn_subagent_runs_child_session ON turn_subagent_runs(subagent_session_id)")
+
+    conn.commit()
+    logger.debug("Ensured turn detail tables exist")
 
 
 def ensure_turns_fts_table(conn: sqlite3.Connection) -> None:
@@ -391,20 +633,33 @@ def ensure_combined_turns_view(conn: sqlite3.Connection) -> None:
         cursor.execute("DROP TABLE combined_turns")
         logger.info("  Dropped old combined_turns table")
     
-    if not view_exists:
-        # Read the view SQL from file
-        sql_file = Path(__file__).parent.parent.parent.parent / "_my" / "combined_turns_view_prototype.sql"
-        
-        if sql_file.exists():
-            # Use the prototype SQL file
-            sql_content = sql_file.read_text(encoding='utf-8')
-            # Replace combined_turns_vw with combined_turns for production use
-            sql_content = sql_content.replace("combined_turns_vw", "combined_turns")
-            cursor.executescript(sql_content)
-        else:
-            # Fallback: inline view creation
-            cursor.execute("DROP VIEW IF EXISTS combined_turns")
-            cursor.execute("""
+    # Always recreate the view so definition changes take effect on existing DBs.
+    cursor.execute("DROP VIEW IF EXISTS combined_turns")
+
+    # Read the view SQL from file
+    sql_file = Path(__file__).parent.parent.parent.parent / "_my" / "combined_turns_view_prototype.sql"
+    
+    if sql_file.exists():
+        # Use the prototype SQL file
+        sql_content = sql_file.read_text(encoding='utf-8')
+        # Replace combined_turns_vw with combined_turns for production use
+        sql_content = sql_content.replace("combined_turns_vw", "combined_turns")
+        sql_content = sql_content.replace(
+            "json(COALESCE(before_metrics, '{}'))",
+            "json(COALESCE(NULLIF(before_metrics, ''), '{}'))",
+        )
+        sql_content = sql_content.replace(
+            "json(COALESCE(after_metrics, '{}'))",
+            "json(COALESCE(NULLIF(after_metrics, ''), '{}'))",
+        )
+        sql_content = sql_content.replace(
+            "json(COALESCE(delta_metrics, '{}'))",
+            "json(COALESCE(NULLIF(delta_metrics, ''), '{}'))",
+        )
+        cursor.executescript(sql_content)
+    else:
+        # Fallback: inline view creation
+        cursor.execute("""
                 CREATE VIEW combined_turns AS
                 WITH all_turns_with_next AS (
                     SELECT 
@@ -464,9 +719,9 @@ def ensure_combined_turns_view(conn: sqlite3.Connection) -> None:
                                 'code_before', code_before,
                                 'code_after', code_after,
                                 'extra', json_object(
-                                    'before_metrics', json(COALESCE(before_metrics, '{}')),
-                                    'after_metrics', json(COALESCE(after_metrics, '{}')),
-                                    'delta_metrics', json(COALESCE(delta_metrics, '{}'))
+                                    'before_metrics', json(COALESCE(NULLIF(before_metrics, ''), '{}')),
+                                    'after_metrics', json(COALESCE(NULLIF(after_metrics, ''), '{}')),
+                                    'delta_metrics', json(COALESCE(NULLIF(delta_metrics, ''), '{}'))
                                 )
                             )
                         ) || ']' AS code_edits_json
@@ -510,10 +765,10 @@ def ensure_combined_turns_view(conn: sqlite3.Connection) -> None:
                 LEFT JOIN code_edits_aggregated ce
                     ON a.request_id = ce.request_id
                 ORDER BY u.session_id, u.exchange_index
-            """)
-        
-        logger.info("  Created combined_turns VIEW")
+                """)
     
+    logger.info("  Created combined_turns VIEW")
+
     conn.commit()
     logger.debug("Ensured combined_turns view exists")
 
@@ -521,7 +776,7 @@ def ensure_combined_turns_view(conn: sqlite3.Connection) -> None:
 def ensure_code_metrics_table(conn: sqlite3.Connection) -> None:
     """Create code_metrics table if it doesn't exist.
     
-    Stores code metrics for Copilot and Cursor edits.
+    Stores code metrics for extracted code edits.
     Includes UNIQUE constraint on (request_id, file_path) to prevent duplicates.
     """
     cursor = conn.cursor()
@@ -529,7 +784,7 @@ def ensure_code_metrics_table(conn: sqlite3.Connection) -> None:
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS code_metrics (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                request_id TEXT NOT NULL,  -- Request/bubble identifier (Copilot: requestId, Cursor: bubble_id)
+                request_id TEXT NOT NULL,  -- Source request or message identifier
                 session_id TEXT,
                 file_path TEXT NOT NULL,
                 
@@ -666,3 +921,5 @@ def json_dumps_for_db(value: Any) -> str:
     if value is None:
         return ""
     return json.dumps(value, ensure_ascii=False)
+
+

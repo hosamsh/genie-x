@@ -6,10 +6,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query
 
-from src.pipeline.extraction.workspace_discovery import find_workspace
+from src.shared.workspace_discovery import find_workspace
 from src.shared.logging.logger import get_logger
 from src.web.shared_state import (
+    connect_db,
     get_all_workspace_metadata,
+    get_database_workspaces,
     get_workspace_status,
 )
 from src.web.utils.perf_timer import PerfTimer
@@ -20,22 +22,56 @@ router = APIRouter(tags=["workspaces"])
 
 @router.get("/api/browse/workspaces")
 async def get_browse_workspaces(
-    page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=500)
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=500),
+    include_live: bool = Query(True),
+    agent: str | None = Query(None),
 ):
     """List available workspaces with extraction/analysis status.
 
     Returns a merged list of:
     1. Live workspaces from extractors (source_available=True)
     2. Database-only workspaces that may no longer exist on disk (source_available=False)
+    Optionally filters to workspaces discovered for a specific agent.
     """
     perf = PerfTimer("GET /api/browse/workspaces")
     try:
-        # Get all workspace metadata (unified model)
-        all_metadata = get_all_workspace_metadata()
-        perf.checkpoint("get_all_workspace_metadata")
+        if include_live:
+            all_metadata = get_all_workspace_metadata()
+            perf.checkpoint("get_all_workspace_metadata")
+            merged_workspaces = [ws.to_api_dict() for ws in all_metadata.values()]
+        else:
+            db_workspaces = get_database_workspaces()
+            perf.checkpoint("get_database_workspaces")
+            merged_workspaces = [
+                {
+                    "workspace_id": data["workspace_id"],
+                    "workspace_name": data["workspace_name"],
+                    "workspace_folder": data["workspace_folder"],
+                    "agents": data["agents"],
+                    "session_count": data["session_count"],
+                    "turn_count": data["turn_count"],
+                    "status": {
+                        agent: {"extracted_at": data["last_timestamp"], "run_dir": None}
+                        for agent in data["agents"]
+                    },
+                    "source_available": None,
+                }
+                for data in db_workspaces.values()
+            ]
 
-        # Convert to list and sort by workspace name
-        merged_workspaces = [ws.to_api_dict() for ws in all_metadata.values()]
+        normalized_agent = agent.strip().casefold() if agent else None
+        if normalized_agent:
+            merged_workspaces = [
+                workspace
+                for workspace in merged_workspaces
+                if any(
+                    (workspace_agent or "").casefold() == normalized_agent
+                    for workspace_agent in workspace.get("agents", [])
+                )
+            ]
+            perf.checkpoint("filter_agent")
+
         merged_workspaces.sort(key=lambda x: x["workspace_name"].lower())
         perf.checkpoint("sort_workspaces")
 
@@ -66,7 +102,56 @@ async def get_workspace_status_all_agents(workspace_id: str):
 
     Works for both live workspaces and database-only workspaces.
     """
-    # Get unified workspace metadata
+    db_workspaces = get_database_workspaces()
+    db_workspace = db_workspaces.get(workspace_id)
+    if db_workspace:
+        return {
+            "workspace_id": workspace_id,
+            "workspace_name": db_workspace["workspace_name"],
+            "agents": db_workspace["agents"],
+            "agents_status": {
+                agent: {"extracted_at": db_workspace["last_timestamp"], "run_dir": None}
+                for agent in db_workspace["agents"]
+            },
+            "is_extracted": db_workspace["turn_count"] > 0,
+            "run_dir": None,
+            "source_available": None,
+        }
+
+    conn = connect_db()
+    try:
+        cursor = conn.execute(
+            """
+            SELECT workspace_name, workspace_folder, GROUP_CONCAT(DISTINCT agent_used),
+                   COUNT(DISTINCT session_id), COUNT(*), MIN(timestamp_iso), MAX(timestamp_iso)
+            FROM turns
+            WHERE workspace_id = ?
+            GROUP BY workspace_id, workspace_name, workspace_folder
+            LIMIT 1
+            """,
+            (workspace_id,),
+        )
+        row = cursor.fetchone()
+    finally:
+        conn.close()
+
+    if row:
+        agents = [agent for agent in (row[2] or "").split(",") if agent]
+        return {
+            "workspace_id": workspace_id,
+            "workspace_name": row[0] or workspace_id,
+            "workspace_folder": row[1] or "",
+            "agents": agents,
+            "agents_status": {
+                agent: {"extracted_at": row[6], "run_dir": None}
+                for agent in agents
+            },
+            "is_extracted": (row[4] or 0) > 0,
+            "run_dir": None,
+            "source_available": None,
+        }
+
+    # Fallback to live metadata for workspaces that are not in the DB yet.
     all_metadata = get_all_workspace_metadata()
     metadata = all_metadata.get(workspace_id)
     
@@ -96,7 +181,7 @@ async def get_workspace_status_all_agents(workspace_id: str):
 @router.get("/api/browse/workspace/{workspace_id}/sync-status")
 async def get_workspace_sync_status(workspace_id: str):
     """Check if workspace source has newer data than the extracted database."""
-    from src.pipeline.extraction.workspace_discovery import get_workspace_latest_stats
+    from src.shared.workspace_discovery import get_workspace_latest_stats
 
     ws = find_workspace(workspace_id)
     if not ws:

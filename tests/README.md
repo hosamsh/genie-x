@@ -82,14 +82,14 @@ uv run pytest tests/unit/ -n auto
 ### Unit Tests (`tests/unit/`)
 
 Fast tests that use **synthetic fixtures** (fake workspace data created in memory). These tests:
-- Don't require real Copilot/Cursor workspace data
+- Don't require real supported-agent workspace data
 - Run in ~30-50 seconds total
 - Are isolated and deterministic
 
 ### Integration Tests (`tests/integration/`)
 
 Slower tests that use **real workspace data** from your machine. These tests:
-- Require actual Copilot/Cursor workspaces to exist
+- Require actual supported-agent workspaces to exist
 - May be skipped if no workspaces are available
 - Test end-to-end behavior
 

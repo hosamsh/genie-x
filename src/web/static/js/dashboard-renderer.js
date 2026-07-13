@@ -133,6 +133,7 @@ async function renderDeclarativeDashboard(containerId, workspaceIdOrNull, dashbo
     setTimeout(async () => {
         await initializeCharts(config.charts, dashData.charts, dashboardId);
         initializeHeatmaps();
+        loadDeferredCharts(config.charts, dashData.charts, dashboardId, workspaceIdOrNull);
         
         // Setup table sort toggle handlers
         setupTableSortHandlers(container, containerId, workspaceIdOrNull, dashboardId);
@@ -237,6 +238,40 @@ async function initializeCharts(chartsConfig, chartsData, dashboardId) {
     
     // Initialize word clouds
     await initializeWordClouds(chartsConfig, chartsData, dashboardId);
+}
+
+async function loadDeferredCharts(chartsConfig, chartsData, dashboardId, workspaceIdOrNull) {
+    const deferredCharts = chartsConfig.filter(chart => {
+        const data = chartsData[chart.id];
+        return data && data.deferred;
+    });
+
+    if (deferredCharts.length === 0) return;
+
+    await Promise.all(deferredCharts.map(async chartConfig => {
+        try {
+            const url = (!workspaceIdOrNull || workspaceIdOrNull === 'system')
+                ? `/api/system/dashboards/${dashboardId}/charts/${chartConfig.id}`
+                : null;
+
+            if (!url) return;
+
+            const response = await fetch(url);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+            const payload = await response.json();
+            chartsData[chartConfig.id] = payload.data;
+            await initializeWordClouds([chartConfig], chartsData, dashboardId);
+        } catch (error) {
+            console.error(`Failed to load deferred chart ${chartConfig.id}:`, error);
+            const chartId = `chart-${dashboardId}-${chartConfig.id}`;
+            const canvas = document.getElementById(chartId);
+            const loading = canvas?.parentElement?.querySelector('.wordcloud-loading');
+            if (loading) {
+                loading.innerHTML = 'Failed to load word cloud';
+            }
+        }
+    }));
 }
 
 // Attach global resize listener for heatmaps

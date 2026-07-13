@@ -20,6 +20,7 @@ export function renderWordCloudCard(chartConfig, chartData, dashboardId) {
 
     const groups = (chartData && chartData.groups) ? chartData.groups : [];
     const defaultGroupId = (chartData && chartData.default_group_id) ? chartData.default_group_id : (groups[0]?.id || '');
+    const isDeferred = Boolean(chartData && chartData.deferred);
 
     const selectHtml = groups.length > 0
         ? `
@@ -55,6 +56,12 @@ export function renderWordCloudCard(chartConfig, chartData, dashboardId) {
                 </div>
             </div>
             <div style="position: relative; height: 500px; width: 100%; display: flex; align-items: stretch; justify-content: stretch;">
+                ${isDeferred ? `
+                    <div class="wordcloud-loading absolute inset-0 flex items-center justify-center text-terminal-gray font-mono text-sm">
+                        <div class="animate-spin rounded-full h-6 w-6 border-b-2 border-primary mr-3"></div>
+                        Loading word cloud...
+                    </div>
+                ` : ''}
                 <canvas id="${chartId}" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: block;"></canvas>
             </div>
         </div>
@@ -219,7 +226,11 @@ export function initializeWordCloud(canvas, chartConfig, payload, dashboardId) {
  * Initialize all word clouds on the page
  */
 export async function initializeWordClouds(chartsConfig, chartsData, dashboardId) {
-    const hasWordCloud = chartsConfig.some(c => (c.chart_type || 'bar') === 'word_cloud');
+    const hasWordCloud = chartsConfig.some(c => {
+        const chartType = c.chart_type || 'bar';
+        const data = chartsData[c.id];
+        return chartType === 'word_cloud' && data && data.word_lists;
+    });
     if (hasWordCloud) {
         try {
             await ensureScriptLoaded(WORDCLOUD_SRC, 'WordCloud');
@@ -239,6 +250,9 @@ export async function initializeWordClouds(chartsConfig, chartsData, dashboardId
 
         const data = chartsData[chartConfig.id];
         if (!data || !data.word_lists) return;
+
+        const loading = canvas.parentElement?.querySelector('.wordcloud-loading');
+        if (loading) loading.remove();
 
         initializeWordCloud(canvas, chartConfig, data, dashboardId);
     });

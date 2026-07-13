@@ -35,6 +35,7 @@ def generate_word_lists(
     min_word_length: int = 3,
     max_words_per_group: int = 500,
     exclude_patterns: Optional[List[str]] = None,
+    max_chars_per_text: Optional[int] = None,
 ) -> Dict[str, Dict[str, List[List[Any]]]]:
     """Execute a query returning (role, model_id, text, thinking_text) rows
     and produce a standardized `word_lists` mapping used by dashboards.
@@ -57,22 +58,29 @@ def generate_word_lists(
     assistant_all_thinking = Counter()
     assistant_model_response: Dict[str, Counter] = {m: Counter() for m in top_model_ids}
     assistant_model_thinking: Dict[str, Counter] = {m: Counter() for m in top_model_ids}
+    text_token_cache: Dict[str, List[str]] = {}
 
     def process_text(text: Optional[str], counters: List[Counter]):
         if not text:
             return
-        tokens = tokenize(text)
-        valid_tokens: List[str] = []
-        for token in tokens:
-            if len(token) < min_word_length:
-                continue
-            if token in STOPWORDS:
-                continue
-            if token.isdigit():
-                continue
-            if compiled_patterns and any(p.search(token) for p in compiled_patterns):
-                continue
-            valid_tokens.append(token)
+        if max_chars_per_text is not None and max_chars_per_text > 0 and len(text) > max_chars_per_text:
+            text = text[:max_chars_per_text]
+        valid_tokens = text_token_cache.get(text)
+        if valid_tokens is None:
+            tokens = tokenize(text)
+            valid_tokens = []
+            for token in tokens:
+                if len(token) < min_word_length:
+                    continue
+                if token in STOPWORDS:
+                    continue
+                if token.isdigit():
+                    continue
+                if compiled_patterns and any(p.search(token) for p in compiled_patterns):
+                    continue
+                valid_tokens.append(token)
+            if len(text_token_cache) < 10000:
+                text_token_cache[text] = valid_tokens
         if not valid_tokens:
             return
         for c in counters:
@@ -269,7 +277,7 @@ async def execute_bulk_streaming_extraction(
     run_id: str, workspace_ids: list[str], refresh: bool
 ) -> None:
     """Execute bulk extraction with streaming output."""
-    from src.pipeline.extraction.workspace_discovery import find_workspace
+    from src.shared.workspace_discovery import find_workspace
     from src.web.shared_state import get_all_workspace_metadata, get_workspace_status
 
     sse = SSELogger(run_id)

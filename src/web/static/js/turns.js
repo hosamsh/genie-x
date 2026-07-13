@@ -41,6 +41,224 @@ const Turns = {
         return kept.join('\n');
     },
 
+    _getTurnById(turnId) {
+        return this.list.find(turn => turn.turn === turnId);
+    },
+
+    _subagentRunsByToolCallId(turn) {
+        const mapping = new Map();
+        const subagentRuns = Array.isArray(turn.subagent_runs) ? turn.subagent_runs : [];
+        subagentRuns.forEach(subagentRun => {
+            const callId = subagentRun.source_tool_call_id || '';
+            if (!callId) return;
+            if (!mapping.has(callId)) mapping.set(callId, []);
+            mapping.get(callId).push(subagentRun);
+        });
+        return mapping;
+    },
+
+    _buildInlineToolRef(turnId, toolRun) {
+        return `<button type="button" onclick="Turns.showToolRunDetails(${turnId}, ${toolRun.tool_index}); return false;" class="inline-flex items-center gap-1 px-1.5 py-0.5 ml-1 rounded border border-primary/30 bg-primary/10 text-[11px] font-mono text-primary hover:bg-primary/20 hover:text-white">tool ${toolRun.tool_index + 1}</button>`;
+    },
+
+    _buildInlineSubagentRef(turnId, subagentRun) {
+        return `<button type="button" onclick="Turns.showSubagentDetails(${turnId}, ${subagentRun.subagent_index}); return false;" class="inline-flex items-center gap-1 px-1.5 py-0.5 ml-1 rounded border border-terminal-green/30 bg-terminal-green/10 text-[11px] font-mono text-terminal-green hover:bg-terminal-green/20 hover:text-white">agent ${subagentRun.subagent_index + 1}</button>`;
+    },
+
+    _decorateAssistantText(displayText, turn) {
+        const toolRuns = Array.isArray(turn.tool_runs) ? turn.tool_runs : [];
+        if (toolRuns.length === 0) {
+            return displayText;
+        }
+
+        const subagentsByCallId = this._subagentRunsByToolCallId(turn);
+        let annotatedText = displayText;
+        const deferredRefs = [];
+
+        toolRuns.forEach(toolRun => {
+            const inlineParts = [this._buildInlineToolRef(turn.turn, toolRun)];
+            const subagents = subagentsByCallId.get(toolRun.call_id || '') || [];
+            subagents.forEach(subagentRun => {
+                inlineParts.push(this._buildInlineSubagentRef(turn.turn, subagentRun));
+            });
+            const inlineRefHtml = inlineParts.join('');
+            const matchText = toolRun.display_text || '';
+            if (matchText && annotatedText.includes(matchText)) {
+                annotatedText = annotatedText.replace(matchText, `${matchText} ${inlineRefHtml}`);
+            } else {
+                deferredRefs.push(`${Formatters.escapeHtml(toolRun.name || `tool ${toolRun.tool_index + 1}`)} ${inlineRefHtml}`);
+            }
+        });
+
+        if (deferredRefs.length > 0) {
+            annotatedText += `\n\n<div class="mt-3 flex flex-wrap gap-2">${deferredRefs.join('')}</div>`;
+        }
+        return annotatedText;
+    },
+
+    _ensureDetailModal() {
+        let modal = document.getElementById('turn-detail-modal');
+        if (modal) return modal;
+
+        modal = document.createElement('div');
+        modal.id = 'turn-detail-modal';
+        modal.className = 'hidden modal-overlay';
+        modal.innerHTML = `
+            <div class="modal-content max-w-5xl" style="background: var(--surface-dark); border: 1px solid var(--border-dark);">
+                <div class="flex items-center justify-between p-4 border-b border-border-dark">
+                    <div>
+                        <h2 id="turn-detail-modal-title" class="text-lg font-semibold text-white font-mono">Details</h2>
+                        <p id="turn-detail-modal-subtitle" class="text-xs text-terminal-gray font-mono mt-1"></p>
+                    </div>
+                    <button type="button" onclick="Turns.closeDetailModal()" class="btn btn-secondary text-xs py-1.5 px-3">CLOSE</button>
+                </div>
+                <div id="turn-detail-modal-body" class="p-4 max-h-[75vh] overflow-y-auto"></div>
+            </div>
+        `;
+        modal.addEventListener('click', (event) => {
+            if (event.target === modal) {
+                this.closeDetailModal();
+            }
+        });
+        document.body.appendChild(modal);
+        return modal;
+    },
+
+    showDetailModal(title, subtitle, bodyHtml) {
+        const modal = this._ensureDetailModal();
+        document.getElementById('turn-detail-modal-title').textContent = title;
+        document.getElementById('turn-detail-modal-subtitle').textContent = subtitle || '';
+        document.getElementById('turn-detail-modal-body').innerHTML = bodyHtml;
+        modal.classList.remove('hidden');
+    },
+
+    closeDetailModal() {
+        const modal = document.getElementById('turn-detail-modal');
+        if (modal) modal.classList.add('hidden');
+    },
+
+    _renderJsonBlock(label, value) {
+        const payload = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+        return `
+            <div class="mb-4">
+                <div class="text-xs uppercase tracking-wide text-terminal-gray font-mono mb-2">${Formatters.escapeHtml(label)}</div>
+                <pre class="bg-background-dark border border-border-dark rounded p-3 text-xs text-white font-mono overflow-x-auto whitespace-pre-wrap">${Formatters.escapeHtml(payload || '')}</pre>
+            </div>
+        `;
+    },
+
+    showToolRunDetails(turnId, toolIndex) {
+        const turn = this._getTurnById(turnId);
+        const toolRun = turn?.tool_runs?.find(item => item.tool_index === toolIndex);
+        if (!turn || !toolRun) return;
+
+        const summary = [
+            toolRun.kind ? `kind: ${toolRun.kind}` : '',
+            toolRun.status ? `status: ${toolRun.status}` : '',
+            toolRun.spawned_session_id ? `spawned: ${toolRun.spawned_session_id}` : '',
+        ].filter(Boolean).join(' • ');
+
+        let bodyHtml = `
+            <div class="space-y-4">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm font-mono">
+                    <div class="dashboard-card"><div class="metric-label">Tool</div><div class="text-white">${Formatters.escapeHtml(toolRun.name || 'tool')}</div></div>
+                    <div class="dashboard-card"><div class="metric-label">Status</div><div class="text-white">${Formatters.escapeHtml(toolRun.status || 'unknown')}</div></div>
+                    <div class="dashboard-card"><div class="metric-label">Call ID</div><div class="text-white break-all">${Formatters.escapeHtml(toolRun.call_id || '-')}</div></div>
+                </div>
+        `;
+
+        bodyHtml += this._renderJsonBlock('Arguments', toolRun.arguments || {});
+        if (toolRun.results && toolRun.results.length > 0) {
+            toolRun.results.forEach((result, index) => {
+                bodyHtml += this._renderJsonBlock(`Result ${index + 1}`, result);
+            });
+        }
+        bodyHtml += this._renderJsonBlock('Raw Call', toolRun.raw_call || {});
+        if (toolRun.extra && Object.keys(toolRun.extra).length > 0) {
+            bodyHtml += this._renderJsonBlock('Extra', toolRun.extra);
+        }
+        if (toolRun.spawned_session_id) {
+            bodyHtml += `
+                <div class="mt-4">
+                    <button type="button" onclick="Turns.openSubagentSession('${toolRun.spawned_session_id}')" class="btn btn-primary text-xs py-1.5 px-3">
+                        OPEN SPAWNED SUBAGENT
+                    </button>
+                </div>
+            `;
+        }
+        bodyHtml += `</div>`;
+
+        this.showDetailModal(`Tool Run: ${toolRun.name || 'tool'}`, summary, bodyHtml);
+    },
+
+    async showSubagentDetails(turnId, subagentIndex) {
+        const turn = this._getTurnById(turnId);
+        const subagentRun = turn?.subagent_runs?.find(item => item.subagent_index === subagentIndex);
+        if (!turn || !subagentRun) return;
+
+        this.showDetailModal(
+            `Subagent: ${subagentRun.title || subagentRun.subagent_session_id}`,
+            `${subagentRun.turn_count || 0} turns • +${subagentRun.total_lines_added || 0} / -${subagentRun.total_lines_removed || 0}`,
+            `<div class="text-terminal-gray font-mono">Loading subagent transcript...</div>`,
+        );
+
+        let childTurns = [];
+        try {
+            const response = await fetch(`/api/browse/session/${subagentRun.subagent_session_id}/turns`);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const payload = await response.json();
+            childTurns = payload.turns || [];
+        } catch (error) {
+            childTurns = [];
+        }
+
+        const transcriptHtml = childTurns.length > 0
+            ? childTurns.map(childTurn => {
+                const role = childTurn.role === 'assistant' ? 'Assistant' : 'User';
+                const text = childTurn.original_text || childTurn.text || '';
+                return `
+                    <div class="border border-border-dark rounded-lg p-3 bg-background-dark mb-3">
+                        <div class="flex items-center justify-between mb-2 text-xs font-mono text-terminal-gray">
+                            <span>${role} • turn ${childTurn.turn}</span>
+                            <span>${childTurn.timestamp_iso ? new Date(childTurn.timestamp_iso).toLocaleString() : ''}</span>
+                        </div>
+                        <div class="markdown-content text-sm text-white">${Formatters.renderMarkdown(text)}</div>
+                    </div>
+                `;
+            }).join('')
+            : '<div class="text-terminal-gray font-mono">No child transcript available.</div>';
+
+        const bodyHtml = `
+            <div class="space-y-4">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm font-mono">
+                    <div class="dashboard-card"><div class="metric-label">Turns</div><div class="text-white">${Formatters.number(subagentRun.turn_count || 0)}</div></div>
+                    <div class="dashboard-card"><div class="metric-label">Lines Added</div><div class="text-white">${Formatters.number(subagentRun.total_lines_added || 0)}</div></div>
+                    <div class="dashboard-card"><div class="metric-label">Lines Removed</div><div class="text-white">${Formatters.number(subagentRun.total_lines_removed || 0)}</div></div>
+                </div>
+                ${subagentRun.prompt_text ? `<div><div class="text-xs uppercase tracking-wide text-terminal-gray font-mono mb-2">Prompt</div><div class="bg-background-dark border border-border-dark rounded p-3 text-sm text-white markdown-content">${Formatters.renderMarkdown(subagentRun.prompt_text)}</div></div>` : ''}
+                ${subagentRun.result_text ? `<div><div class="text-xs uppercase tracking-wide text-terminal-gray font-mono mb-2">Latest Output</div><div class="bg-background-dark border border-border-dark rounded p-3 text-sm text-white markdown-content">${Formatters.renderMarkdown(subagentRun.result_text)}</div></div>` : ''}
+                <div class="flex gap-2">
+                    <button type="button" onclick="Turns.openSubagentSession('${subagentRun.subagent_session_id}')" class="btn btn-primary text-xs py-1.5 px-3">OPEN FULL SESSION</button>
+                </div>
+                <div>
+                    <div class="text-xs uppercase tracking-wide text-terminal-gray font-mono mb-2">Transcript</div>
+                    ${transcriptHtml}
+                </div>
+            </div>
+        `;
+
+        this.showDetailModal(
+            `Subagent: ${subagentRun.title || subagentRun.subagent_session_id}`,
+            `${subagentRun.subagent_session_id}`,
+            bodyHtml,
+        );
+    },
+
+    openSubagentSession(subagentSessionId) {
+        if (!window.WorkspacePage || !window.WorkspacePage.workspaceId) return;
+        window.location.href = `/workspace/${window.WorkspacePage.workspaceId}/session/${subagentSessionId}`;
+    },
+
     /**
      * Load turns for a session
      */
@@ -423,6 +641,7 @@ const Turns = {
         let displayText = turn.original_text || turn.text || '';
         if (!isUser) {
             displayText = this._stripAssistantMetadata(displayText);
+            displayText = this._decorateAssistantText(displayText, turn);
         }
         const footerHtml = this._renderTurnFooter(turn, isUser);
         
@@ -451,7 +670,8 @@ const Turns = {
                     </div>
                 </div>
                 ${turn.files && turn.files.length > 0 ? this._renderFilesList(turn) : ''}
-                ${!isUser && turn.tools && turn.tools.length > 0 ? this._renderToolsList(turn) : ''}
+                ${!isUser && ((turn.tool_runs && turn.tool_runs.length > 0) || (turn.tools && turn.tools.length > 0)) ? this._renderToolsList(turn) : ''}
+                ${!isUser && turn.subagent_runs && turn.subagent_runs.length > 0 ? this._renderSubagentsList(turn) : ''}
                 ${!isUser ? this._renderCodeEdits(turn) : ''}
                 ${footerHtml}
             </div>
@@ -538,31 +758,74 @@ const Turns = {
      * Render tools list for a turn
      */
     _renderToolsList(turn) {
-        if (!turn.tools || turn.tools.length === 0) return '';
-
-        const toolsId = `tools-${turn.turn}`;
-
-        if (turn.tools.length <= 3) {
-            const displayTools = turn.tools.join(', ');
+        const toolRuns = Array.isArray(turn.tool_runs) ? turn.tool_runs : [];
+        if (toolRuns.length === 0) {
+            if (!turn.tools || turn.tools.length === 0) return '';
             return `
                 <div class="mt-2 text-xs text-purple-400 font-mono">
-                    🔧 ${turn.tools.length} tool(s): ${displayTools}
+                    🔧 ${turn.tools.length} tool(s): ${turn.tools.join(', ')}
                 </div>
             `;
         }
 
-        const allTools = turn.tools.map(t => `
-            <div class="py-0.5">🔧 ${Formatters.escapeHtml(t)}</div>
-        `).join('');
+        const allTools = toolRuns.map(toolRun => {
+            const statusHtml = toolRun.status && toolRun.status !== 'unknown'
+                ? `<span class="text-[10px] uppercase tracking-wide text-terminal-gray">${Formatters.escapeHtml(toolRun.status)}</span>`
+                : '';
+            const subagentButton = toolRun.spawned_session_id
+                ? `<button type="button" onclick="Turns.openSubagentSession('${toolRun.spawned_session_id}')" class="text-terminal-green hover:text-white">agent</button>`
+                : '';
+            return `
+                <div class="flex items-center justify-between py-1 gap-3">
+                    <div class="flex items-center gap-2 min-w-0">
+                        <span>🔧</span>
+                        <button type="button" onclick="Turns.showToolRunDetails(${turn.turn}, ${toolRun.tool_index})" class="text-left text-purple-400 hover:text-white truncate">${Formatters.escapeHtml(toolRun.name || `tool ${toolRun.tool_index + 1}`)}</button>
+                        ${statusHtml}
+                    </div>
+                    <div class="flex items-center gap-2 text-xs font-mono">
+                        ${subagentButton}
+                    </div>
+                </div>
+            `;
+        }).join('');
 
+        const toolsId = `tools-${turn.turn}`;
         return `
             <div class="mt-2 text-xs">
                 <div class="cursor-pointer hover:bg-surface-dark rounded px-2 py-1 -mx-2 text-purple-400 flex items-center gap-1" onclick="Turns.toggleToolsList('${toolsId}')">
                     <span id="${toolsId}-arrow" class="material-symbols-outlined text-[1rem] transition-transform">chevron_right</span>
-                    <span>🔧 ${turn.tools.length} tools</span>
+                    <span>🔧 ${toolRuns.length} tools</span>
                 </div>
                 <div id="${toolsId}-content" class="mt-1 ml-6 text-purple-400 font-mono" style="display: none;">
                     ${allTools}
+                </div>
+            </div>
+        `;
+    },
+
+    _renderSubagentsList(turn) {
+        const subagentRuns = Array.isArray(turn.subagent_runs) ? turn.subagent_runs : [];
+        if (subagentRuns.length === 0) return '';
+
+        const subagentsId = `subagents-${turn.turn}`;
+        const allSubagents = subagentRuns.map(subagentRun => `
+            <div class="flex items-center justify-between py-1 gap-3">
+                <div class="flex items-center gap-2 min-w-0">
+                    <span>🤖</span>
+                    <button type="button" onclick="Turns.showSubagentDetails(${turn.turn}, ${subagentRun.subagent_index})" class="text-left text-terminal-green hover:text-white truncate">${Formatters.escapeHtml(subagentRun.title || subagentRun.subagent_session_id)}</button>
+                </div>
+                <div class="text-xs font-mono text-terminal-gray whitespace-nowrap">${Formatters.number(subagentRun.turn_count || 0)} turns</div>
+            </div>
+        `).join('');
+
+        return `
+            <div class="mt-2 text-xs">
+                <div class="cursor-pointer hover:bg-surface-dark rounded px-2 py-1 -mx-2 text-terminal-green flex items-center gap-1" onclick="Turns.toggleToolsList('${subagentsId}')">
+                    <span id="${subagentsId}-arrow" class="material-symbols-outlined text-[1rem] transition-transform">chevron_right</span>
+                    <span>🤖 ${subagentRuns.length} subagents</span>
+                </div>
+                <div id="${subagentsId}-content" class="mt-1 ml-6 text-terminal-green font-mono" style="display: none;">
+                    ${allSubagents}
                 </div>
             </div>
         `;

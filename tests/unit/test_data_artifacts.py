@@ -102,7 +102,7 @@ class TestDataContracts:
         # Check agents
         cursor = conn.execute("SELECT DISTINCT agent_used FROM turns WHERE agent_used IS NOT NULL")
         actual_agents = {row[0] for row in cursor.fetchall()}
-        valid_agents = {"copilot", "cursor", "claude_code"}
+        valid_agents = {"copilot", "claude_code", "copilot_cli", "codex"}
         invalid_agents = actual_agents - valid_agents
         
         conn.close()

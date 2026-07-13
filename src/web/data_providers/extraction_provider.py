@@ -2,8 +2,8 @@
 Extraction Data Provider - Provides extraction statistics and code metrics.
 
 Queries are performed by workspace_folder (normalized, case-insensitive) to
-enable cross-agent consolidation. When multiple agents (copilot, claude_code,
-cursor) work on the same folder, they share the same workspace_folder even
+enable cross-agent consolidation. When multiple supported agents work on the
+same folder, they share the same workspace_folder even
 if they have different workspace_ids.
 """
 
@@ -33,9 +33,16 @@ class ExtractionDataProvider:
     All queries use workspace_folder for cross-agent consolidation.
     """
 
-    def __init__(self, db_connection: sqlite3.Connection, workspace_id: str, workspace_folder: Optional[str] = None):
+    def __init__(
+        self,
+        db_connection: sqlite3.Connection,
+        workspace_id: str,
+        workspace_folder: Optional[str] = None,
+        related_workspace_ids: Optional[List[str]] = None,
+    ):
         self.conn = db_connection
         self.workspace_id = workspace_id
+        self.related_workspace_ids = related_workspace_ids or [workspace_id]
         # Use workspace_folder if provided, otherwise we'll resolve it lazily
         self._workspace_folder = workspace_folder
         self._extraction_cache: Optional[Dict] = None
@@ -66,12 +73,19 @@ class ExtractionDataProvider:
         """Get normalized folder for SQL queries."""
         return _normalize_folder(self.workspace_folder)
 
+    def _workspace_where(self, column: str = "workspace_id") -> tuple[str, tuple[Any, ...]]:
+        ids = [wid for wid in self.related_workspace_ids if wid]
+        if ids:
+            placeholders = ", ".join("?" for _ in ids)
+            return f"{column} IN ({placeholders})", tuple(ids)
+        return "LOWER(REPLACE(workspace_folder, '\\', '/')) = ?", (self._folder_filter(),)
+
     def get_extraction_stats(self) -> Dict[str, Any]:
         """Get extraction statistics for the workspace."""
         if self._extraction_cache:
             return self._extraction_cache
 
-        folder_filter = self._folder_filter()
+        workspace_where, workspace_params = self._workspace_where("workspace_id")
         
         # Query workspace_info - aggregate across all workspace_ids with same folder
         cursor = self.conn.execute(
@@ -83,9 +97,9 @@ class ExtractionDataProvider:
                       SUM(total_doc_loc) as total_doc_loc, 
                       SUM(extraction_duration_ms) as extraction_duration_ms
                FROM workspace_info 
-               WHERE LOWER(REPLACE(workspace_folder, '\\', '/')) = ?
-               GROUP BY LOWER(REPLACE(workspace_folder, '\\', '/'))""",
-            (folder_filter,)
+               WHERE """ + workspace_where + """
+               GROUP BY workspace_folder""",
+            workspace_params
         )
         row = cursor.fetchone()
 
@@ -105,8 +119,8 @@ class ExtractionDataProvider:
                       SUM(CAST(code_tokens AS INTEGER)),
                       SUM(CAST(tool_tokens AS INTEGER))
                FROM turns 
-               WHERE LOWER(REPLACE(workspace_folder, '\\', '/')) = ?""",
-            (folder_filter,)
+               WHERE """ + workspace_where,
+            workspace_params
         )
         token_row = cursor.fetchone()
         total_visible_tokens = sum(x or 0 for x in token_row) if token_row else 0
@@ -117,8 +131,8 @@ class ExtractionDataProvider:
         if total_code_loc == 0:
             cursor = self.conn.execute(
                 """SELECT SUM(CAST(total_lines_added AS INTEGER)) FROM turns 
-                   WHERE LOWER(REPLACE(workspace_folder, '\\', '/')) = ?""",
-                (folder_filter,)
+                   WHERE """ + workspace_where,
+                workspace_params
             )
             fallback_row = cursor.fetchone()
             if fallback_row and fallback_row[0]:
@@ -143,18 +157,19 @@ class ExtractionDataProvider:
         if self._code_metrics_cache:
             return self._code_metrics_cache
 
-        folder_filter = self._folder_filter()
+        turns_where, turns_params = self._workspace_where("t.workspace_id")
+        fallback_where, fallback_params = self._workspace_where("workspace_id")
 
         # code_metrics table doesn't have workspace_folder, so we join with turns
         # or query all workspace_ids that share the same folder
         cursor = self.conn.execute(
             """SELECT COUNT(DISTINCT cm.session_id) as sessions_with_code,
-                      SUM(cm.lines_added) as total_lines_added,
-                      SUM(cm.lines_removed) as total_lines_removed
+                      SUM(COALESCE(cm.lines_added, CAST(json_extract(cm.delta_metrics, '$.lines_added') AS INTEGER), 0)) as total_lines_added,
+                      SUM(COALESCE(cm.lines_removed, CAST(json_extract(cm.delta_metrics, '$.lines_removed') AS INTEGER), 0)) as total_lines_removed
                FROM code_metrics cm
                JOIN turns t ON cm.request_id = t.request_id
-               WHERE LOWER(REPLACE(t.workspace_folder, '\\', '/')) = ?""",
-            (folder_filter,)
+               WHERE """ + turns_where,
+            turns_params
         )
         metrics_row = cursor.fetchone()
 
@@ -169,9 +184,9 @@ class ExtractionDataProvider:
                           SUM(CAST(total_lines_added AS INTEGER)) as total_lines_added,
                           SUM(CAST(total_lines_removed AS INTEGER)) as total_lines_removed
                    FROM turns 
-                   WHERE LOWER(REPLACE(workspace_folder, '\\', '/')) = ?
+                   WHERE """ + fallback_where + """
                      AND (total_lines_added > 0 OR total_lines_removed > 0)""",
-                (folder_filter,)
+                fallback_params
             )
             fallback_row = cursor.fetchone()
             if fallback_row:
@@ -205,29 +220,31 @@ class ExtractionDataProvider:
 
     def get_model_usage(self, **kwargs) -> List[Dict[str, Any]]:
         """Get model usage distribution by lines of code."""
-        folder_filter = self._folder_filter()
+        turns_where, turns_params = self._workspace_where("t.workspace_id")
+        fallback_where, fallback_params = self._workspace_where("workspace_id")
         
         # code_metrics table doesn't have workspace_folder, so we join with turns
         cursor = self.conn.execute(
-            """SELECT cm.model_id, SUM(cm.lines_added) as locs
+            """SELECT cm.model_id,
+                      SUM(COALESCE(cm.lines_added, CAST(json_extract(cm.delta_metrics, '$.lines_added') AS INTEGER), 0)) as locs
                FROM code_metrics cm
                JOIN turns t ON cm.request_id = t.request_id
-               WHERE LOWER(REPLACE(t.workspace_folder, '\\', '/')) = ? AND cm.model_id IS NOT NULL
+               WHERE """ + turns_where + """ AND cm.model_id IS NOT NULL
                GROUP BY cm.model_id
                ORDER BY locs DESC""",
-            (folder_filter,)
+            turns_params
         )
-        model_usage = [{"model": row[0], "locs": row[1]} for row in cursor.fetchall()]
+        model_usage = [{"model": row[0], "locs": row[1]} for row in cursor.fetchall() if (row[1] or 0) > 0]
 
         # Fallback to turns table
         if not model_usage:
             cursor = self.conn.execute(
                 """SELECT model_id, SUM(CAST(total_lines_added AS INTEGER)) as locs
                    FROM turns 
-                   WHERE LOWER(REPLACE(workspace_folder, '\\', '/')) = ? AND model_id IS NOT NULL AND total_lines_added > 0
+                   WHERE """ + fallback_where + """ AND model_id IS NOT NULL AND total_lines_added > 0
                    GROUP BY model_id
                    ORDER BY locs DESC""",
-                (folder_filter,)
+                fallback_params
             )
             model_usage = [{"model": row[0], "locs": row[1]} for row in cursor.fetchall()]
 
@@ -255,43 +272,60 @@ class ExtractionDataProvider:
 
     def get_code_timeline(self) -> List[Dict[str, Any]]:
         """Get code contribution timeline."""
-        folder_filter = self._folder_filter()
+        turns_where, turns_params = self._workspace_where("t.workspace_id")
+        fallback_where, fallback_params = self._workspace_where("workspace_id")
         
         cursor = self.conn.execute(
-            """SELECT (SUBSTR(REPLACE(t.timestamp_iso, ' ', 'T'), 1, 13) || ':00') as date, 
-                      SUM(cm.lines_added) as added,
-                      SUM(cm.lines_removed) as removed
+            """SELECT DATE(t.timestamp_iso) as date, 
+                      SUM(COALESCE(cm.lines_added, CAST(json_extract(cm.delta_metrics, '$.lines_added') AS INTEGER), 0)) as added,
+                      SUM(COALESCE(cm.lines_removed, CAST(json_extract(cm.delta_metrics, '$.lines_removed') AS INTEGER), 0)) as removed
                FROM code_metrics cm
                JOIN turns t ON cm.request_id = t.request_id
-               WHERE LOWER(REPLACE(t.workspace_folder, '\\', '/')) = ? AND t.timestamp_iso IS NOT NULL AND t.timestamp_iso != ''
+               WHERE """ + turns_where + """ AND t.timestamp_iso IS NOT NULL AND t.timestamp_iso != ''
                GROUP BY date
                ORDER BY date""",
-            (folder_filter,)
+            turns_params
         )
-        return [{"date": row[0], "added": row[1] or 0, "removed": row[2] or 0} for row in cursor.fetchall()]
+        timeline = [{"date": row[0], "added": row[1] or 0, "removed": row[2] or 0} for row in cursor.fetchall() if row[0]]
+        if any((item["added"] or 0) > 0 or (item["removed"] or 0) > 0 for item in timeline):
+            return timeline
+
+        cursor = self.conn.execute(
+            """SELECT DATE(timestamp_iso) as date,
+                      SUM(COALESCE(CAST(total_lines_added AS INTEGER), 0)) as added,
+                      SUM(COALESCE(CAST(total_lines_removed AS INTEGER), 0)) as removed
+               FROM turns
+               WHERE """ + fallback_where + """
+                 AND timestamp_iso IS NOT NULL AND timestamp_iso != ''
+                 AND (COALESCE(total_lines_added, 0) > 0 OR COALESCE(total_lines_removed, 0) > 0)
+               GROUP BY date
+               ORDER BY date""",
+            fallback_params
+        )
+        return [{"date": row[0], "added": row[1] or 0, "removed": row[2] or 0} for row in cursor.fetchall() if row[0]]
 
     def get_languages(self, **kwargs) -> List[Dict[str, Any]]:
         """Get languages used in the workspace."""
-        folder_filter = self._folder_filter()
+        workspace_where, workspace_params = self._workspace_where("workspace_id")
         
         cursor = self.conn.execute(
             """SELECT primary_language, COUNT(*) as change_count
                FROM turns
-               WHERE LOWER(REPLACE(workspace_folder, '\\', '/')) = ? AND primary_language IS NOT NULL AND primary_language != ''
+               WHERE """ + workspace_where + """ AND primary_language IS NOT NULL AND primary_language != ''
                GROUP BY primary_language
                ORDER BY change_count DESC
                LIMIT 10""",
-            (folder_filter,)
+            workspace_params
         )
         return [{"language": row[0], "change_count": row[1]} for row in cursor.fetchall()]
 
     def get_tool_usage(self, **kwargs) -> List[Dict[str, Any]]:
         """Get tool usage statistics."""
-        folder_filter = self._folder_filter()
+        workspace_where, workspace_params = self._workspace_where("workspace_id")
         
         cursor = self.conn.execute(
-            """SELECT tools FROM turns WHERE LOWER(REPLACE(workspace_folder, '\\', '/')) = ? AND tools IS NOT NULL AND tools != ''""",
-            (folder_filter,)
+            """SELECT tools FROM turns WHERE """ + workspace_where + """ AND tools IS NOT NULL AND tools != ''""",
+            workspace_params
         )
 
         tool_counts = {}
@@ -312,19 +346,19 @@ class ExtractionDataProvider:
 
     def get_session_timeline(self) -> List[Dict[str, Any]]:
         """Get session creation timeline."""
-        folder_filter = self._folder_filter()
+        workspace_where, workspace_params = self._workspace_where("workspace_id")
         
         cursor = self.conn.execute(
             """SELECT DATE(first_timestamp) as date, COUNT(*) as session_count
                FROM (
                    SELECT session_id, MIN(timestamp_iso) as first_timestamp
                    FROM turns
-                   WHERE LOWER(REPLACE(workspace_folder, '\\', '/')) = ?
+                   WHERE """ + workspace_where + """
                    GROUP BY session_id
                )
                GROUP BY date
                ORDER BY date""",
-            (folder_filter,)
+            workspace_params
         )
         return [{"date": row[0], "sessions": row[1]} for row in cursor.fetchall()]
 
@@ -380,21 +414,21 @@ class ExtractionDataProvider:
                     pass
 
         # Get top assistant models by turn count in this workspace
-        folder_filter = self._folder_filter()
+        workspace_where, workspace_params = self._workspace_where("workspace_id")
         top_model_ids: List[str] = []
         try:
             cur = self.conn.execute(
                 """
                 SELECT COALESCE(model_id, '') as model_id, COUNT(*) as c
                 FROM turns
-                WHERE LOWER(REPLACE(workspace_folder, '\\', '/')) = ?
+                WHERE """ + workspace_where + """
                   AND role = 'assistant'
                   AND COALESCE(model_id, '') != ''
                 GROUP BY COALESCE(model_id, '')
                 ORDER BY c DESC
                 LIMIT ?
                 """,
-                (folder_filter, top_models),
+                (*workspace_params, top_models),
             )
             top_model_ids = [r[0] for r in cur.fetchall() if r and r[0]]
         except sqlite3.OperationalError:
@@ -409,7 +443,7 @@ class ExtractionDataProvider:
         capped to exclude outliers (idle gaps) and with fallback for identical timestamps.
         Returns time in minutes for workspace-level display.
         """
-        folder_filter = self._folder_filter()
+        assistant_where, assistant_params = self._workspace_where("a.workspace_id")
         cap_ms = self._get_agentic_response_time_cap_ms()
         try:
             cursor = self.conn.execute(
@@ -430,13 +464,13 @@ class ExtractionDataProvider:
                  AND u.turn = a.responding_to_turn
                  AND u.role = 'user'
                 WHERE a.role = 'assistant'
-                  AND LOWER(REPLACE(a.workspace_folder, '\\', '/')) = ?
+                  AND """ + assistant_where + """
                   AND u.timestamp_ms IS NOT NULL
                   AND u.timestamp_ms > 0
                   AND a.timestamp_ms IS NOT NULL
                   AND a.timestamp_ms > 0
                 """,
-                (cap_ms, folder_filter)
+                (cap_ms, *assistant_params)
             )
             row = cursor.fetchone()
             total_ms = int(row[0] or 0)
@@ -455,7 +489,7 @@ class ExtractionDataProvider:
 
     def _get_response_time_median_ms(self) -> int:
         """Median of response_time_ms for assistant turns in this workspace (ms)."""
-        folder_filter = self._folder_filter()
+        workspace_where, workspace_params = self._workspace_where("workspace_id")
         try:
             cursor = self.conn.execute(
                 """
@@ -468,7 +502,7 @@ class ExtractionDataProvider:
                   WHERE role = 'assistant'
                     AND response_time_ms IS NOT NULL
                     AND response_time_ms > 0
-                    AND LOWER(REPLACE(workspace_folder, '\\', '/')) = ?
+                    AND """ + workspace_where + """
                 ),
                 median AS (
                   SELECT AVG(time_ms) AS med
@@ -477,7 +511,7 @@ class ExtractionDataProvider:
                 )
                 SELECT COALESCE(med, 0) FROM median
                 """,
-                (folder_filter,)
+                workspace_params
             )
             med = cursor.fetchone()[0] or 0
             return int(med)

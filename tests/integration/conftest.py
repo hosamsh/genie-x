@@ -199,21 +199,19 @@ def make_test_config(tmp_path: Path) -> Callable[..., Path]:
     """Factory fixture to create per-test config files."""
     def _make_config(
         copilot_storage: Optional[Path] = None,
-        cursor_storage: Optional[Path] = None,
-        cursor_global_storage: Optional[Path] = None,
-        claude_dir: Optional[Path] = None
+        claude_dir: Optional[Path] = None,
+        copilot_cli_session_state_dir: Optional[Path] = None,
     ) -> Path:
         config = {
             "extract": {
                 "copilot": {
                     "workspace_storage": str(copilot_storage) if copilot_storage else str(tmp_path / "empty_copilot")
                 },
-                "cursor": {
-                    "workspace_storage": str(cursor_storage) if cursor_storage else str(tmp_path / "empty_cursor"),
-                    "global_storage": str(cursor_global_storage) if cursor_global_storage else str(tmp_path / "empty_cursor_global")
-                },
                 "claude_code": {
                     "claude_dir": str(claude_dir) if claude_dir else str(tmp_path / "empty_claude")
+                },
+                "copilot_cli": {
+                    "session_state_dir": str(copilot_cli_session_state_dir) if copilot_cli_session_state_dir else str(tmp_path / "empty_copilot_cli")
                 }
             },
             "llm_models": {},

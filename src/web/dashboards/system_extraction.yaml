@@ -113,7 +113,7 @@ charts:
       y_range: [0, 23]  # Show all 24 hours
       x_min_span_days: 90  # Show at least 3 months of dates
 
-  # Agent usage distribution (Copilot vs Cursor)
+  # Agent usage distribution
   - id: agent_distribution
     title: Agent Usage
     description: Distribution by AI coding assistant
@@ -297,6 +297,7 @@ charts:
       type: function
       function: get_word_cloud_terms
     options:
+      defer_initial_load: true
       max_words: 300
       min_word_length: 4
       top_models: 5

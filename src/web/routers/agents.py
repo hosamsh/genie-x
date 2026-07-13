@@ -6,11 +6,11 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 
-from src.extract_plugins.agent_registry import (
-    list_registered_agents,
-    get_agent_metadata,
+from src.extract.registry import (
     get_all_agent_metadata,
     get_agent_icon_path,
+    get_agent_metadata,
+    list_agents,
 )
 from src.shared.logging.logger import get_logger
 
@@ -19,11 +19,26 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
 
+def _build_icon_url(agent_id: str) -> str:
+    """Build a cache-busted icon URL for an agent."""
+    base_url = f"/api/agents/{agent_id}/icon"
+    icon_path = get_agent_icon_path(agent_id)
+    if icon_path is None:
+        return base_url
+
+    try:
+        version = icon_path.stat().st_mtime_ns
+    except OSError:
+        return base_url
+
+    return f"{base_url}?v={version}"
+
+
 @router.get("/")
 async def get_agents():
-    """Get list of all registered agents with their metadata."""
+    """Get list of all supported agents with their metadata."""
     try:
-        agents = list_registered_agents()
+        agents = list_agents()
         metadata = get_all_agent_metadata()
         
         result = []
@@ -32,6 +47,7 @@ async def get_agents():
                 "id": agent,
                 "name": agent,
                 "has_icon": get_agent_icon_path(agent) is not None,
+                "icon_url": _build_icon_url(agent),
             }
             
             # Add metadata if available
@@ -60,11 +76,13 @@ async def get_agent_metadata_endpoint(agent_id: str):
             "color": "bg-surface-dark text-terminal-gray",
             "description": f"{agent_id} chat extraction",
             "has_icon": get_agent_icon_path(agent_id) is not None,
+            "icon_url": _build_icon_url(agent_id),
         })
     
     result = dict(metadata)
     result["id"] = agent_id
     result["has_icon"] = get_agent_icon_path(agent_id) is not None
+    result["icon_url"] = _build_icon_url(agent_id)
     
     return JSONResponse(content=result)
 

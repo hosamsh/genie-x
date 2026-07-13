@@ -7,7 +7,6 @@ These tests verify system invariants and contracts at boundaries:
 - T2-7: CLI works without web dependencies
 - T2-8: Config environment variable substitution
 """
-import json
 import sqlite3
 import subprocess
 import sys
@@ -18,46 +17,6 @@ import pytest
 
 
 from conftest import get_test_db_path
-class TestAgentFailureIsolation:
-    """T2-1: Verify one agent's error does not block others."""
-
-    def test_list_continues_with_corrupted_cursor_storage(
-        self, cli_runner, make_test_config, copilot_workspace, tmp_path, run_dir
-    ):
-        """Valid Copilot workspace should appear even with corrupted Cursor storage."""
-        # Create a corrupted cursor storage - invalid state.vscdb
-        corrupted_cursor = tmp_path / "cursor_corrupted" / "bad-workspace"
-        corrupted_cursor.mkdir(parents=True)
-        
-        # Create workspace.json (valid)
-        workspace_json = {"folder": "file:///c:/some/folder"}
-        (corrupted_cursor / "workspace.json").write_text(
-            json.dumps(workspace_json), encoding="utf-8"
-        )
-        
-        # Create corrupted state.vscdb (empty file - not valid SQLite)
-        (corrupted_cursor / "state.vscdb").write_text("not a sqlite database")
-        
-        config_path = make_test_config(
-            copilot_storage=copilot_workspace["storage_root"],
-            cursor_storage=tmp_path / "cursor_corrupted",
-        )
-        
-        result = cli_runner("--list", "--json", config_path=config_path)
-        
-        # Should exit successfully despite cursor corruption
-        assert result.returncode == 0, f"List failed: {result.stderr}"
-        
-        # Should contain the valid copilot workspace
-        output = json.loads(result.stdout)
-        workspaces = output.get("workspaces", output)  # Handle both formats
-        if isinstance(workspaces, list):
-            workspace_ids = [ws.get("workspace_id") if isinstance(ws, dict) else ws for ws in workspaces]
-        else:
-            workspace_ids = []
-        assert copilot_workspace["workspace_id"] in workspace_ids
-
-
 class TestCombinedTurnsView:
     """T2-2: Verify combined_turns is a VIEW derived from turns."""
 
@@ -241,9 +200,6 @@ class TestConfigEnvSubstitution:
 extract:
   copilot:
     workspace_storage: "${TEST_CONFIG_PATH_VAR}/copilot"
-  cursor:
-    workspace_storage: "${TEST_CONFIG_PATH_VAR}/cursor"
-    global_storage: "${TEST_CONFIG_PATH_VAR}/cursor_global"
   claude_code:
     claude_dir: "${TEST_CONFIG_PATH_VAR}/claude"
 llm_models: {}
@@ -292,9 +248,6 @@ else:
 extract:
   copilot:
     workspace_storage: "${{{var_name}}}/copilot"
-  cursor:
-    workspace_storage: /default/path
-    global_storage: /default/global
   claude_code:
     claude_dir: /default/claude
 llm_models: {{}}

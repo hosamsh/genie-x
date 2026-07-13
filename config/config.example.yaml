@@ -11,7 +11,7 @@ model_defaults:
   #     "2022-11-01": "gpt-3.5-turbo"
   #     "2023-03-01": "gpt-4"
   #   default: "auto"  
-  # cursor:
+  # claude_code:
   #   timeline:
   #     "2024-06-01": "claude-3.5-sonnet"
   #   default: "auto"
@@ -35,26 +35,35 @@ extract:
     # workspace_storage: "${APPDATA}/Code/User/workspaceStorage"
     output_dir: "./output/extract"
   
-  cursor:
-    # Cursor-specific storage locations
-    # OPTIONAL: If omitted, auto-detected based on platform:
-    #   Windows: %APPDATA%/Cursor/User/workspaceStorage
-    #   macOS:   ~/Library/Application Support/Cursor/User/workspaceStorage
-    #   Linux:   ~/.config/Cursor/User/workspaceStorage
-    # workspace_storage: "${APPDATA}/Cursor/User/workspaceStorage"
-    # global_storage: "${APPDATA}/Cursor/User/globalStorage"
-    output_dir: "./output/extract"
-  
   claude_code:
     # Claude Code storage location
     # OPTIONAL: If omitted, auto-detected as ~/.claude (all platforms)
     # claude_dir: "${HOME}/.claude"
+    # OPTIONAL: Explicit roots to scan. Useful on Windows when you want to add
+    # both native and WSL-accessible stores.
+    # storage_roots:
+    #   - "C:/Users/hosam/.claude"
+    #   - "//wsl.localhost/Ubuntu/home/hosam/.claude"
+    output_dir: "./output/extract"
+
+  codex:
+    # OpenAI Codex local storage root
+    # OPTIONAL: If omitted, auto-detected as ~/.codex (all platforms)
+    # codex_home: "${HOME}/.codex"
+    # OPTIONAL: Multiple storage roots to scan.
+    # storage_roots:
+    #   - "C:/Users/hosam/.codex"
+    #   - "//wsl.localhost/Ubuntu/home/hosam/.codex"
     output_dir: "./output/extract"
 
   copilot_cli:
     # GitHub Copilot CLI session-state directory
     # OPTIONAL: If omitted, auto-detected as ~/.copilot/session-state (all platforms)
     # session_state_dir: "${HOME}/.copilot/session-state"
+    # OPTIONAL: Multiple storage roots to scan.
+    # storage_roots:
+    #   - "C:/Users/hosam/.copilot/session-state"
+    #   - "//wsl.localhost/Ubuntu/home/hosam/.copilot/session-state"
     output_dir: "./output/extract"
 
 web:

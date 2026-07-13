@@ -14,14 +14,19 @@ class NavigationManager {
     }
     
     async init() {
-        await this.loadWorkspaces();
         this.setupEventListeners();
+
+        if (!document.getElementById('nav-workspaces')) {
+            return;
+        }
+
+        await this.loadWorkspaces();
         this.restoreState();
     }
     
     async loadWorkspaces() {
         try {
-            const response = await fetch('/api/browse/workspaces?limit=100');
+            const response = await fetch('/api/browse/workspaces?limit=100&include_live=true');
             const data = await response.json();
             this.workspaces = data.workspaces || [];
             this.renderWorkspaces();

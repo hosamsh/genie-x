@@ -32,9 +32,15 @@ def test_extract_single_workspace_creates_database(cli_runner, make_test_config,
     conn = sqlite3.connect(str(db_path))
     cursor = conn.execute("SELECT COUNT(*) FROM turns")
     turn_count = cursor.fetchone()[0]
+    cursor = conn.execute(
+        "SELECT COUNT(*) FROM turns WHERE role = ? AND original_text = ?",
+        ("user", "Hello assistant, can you help with Python testing?"),
+    )
+    user_prompt_count = cursor.fetchone()[0]
     conn.close()
     
     assert turn_count > 0, "No turns extracted"
+    assert user_prompt_count > 0, "Expected string-form Copilot user prompt to be preserved"
     
     # Verify workspace_info table has entry
     conn = sqlite3.connect(str(db_path))
@@ -46,13 +52,9 @@ def test_extract_single_workspace_creates_database(cli_runner, make_test_config,
     assert ws_row[0] == workspace_id
 
 
-def test_extract_all_workspaces(cli_runner, make_test_config, copilot_workspace, cursor_workspace, run_dir):
-    """T1-5: Verify --all extracts multiple workspaces."""
-    config_path = make_test_config(
-        copilot_storage=copilot_workspace["storage_root"],
-        cursor_storage=cursor_workspace["storage_root"],
-        cursor_global_storage=cursor_workspace.get("global_storage", cursor_workspace["storage_root"].parent / "cursor_global")
-    )
+def test_extract_all_workspaces(cli_runner, make_test_config, copilot_workspace, run_dir):
+    """T1-5: Verify --all extracts available supported workspaces."""
+    config_path = make_test_config(copilot_storage=copilot_workspace["storage_root"])
     
     result = cli_runner("--extract", "--all", "--run-dir", str(run_dir), config_path=config_path)
     
@@ -62,13 +64,12 @@ def test_extract_all_workspaces(cli_runner, make_test_config, copilot_workspace,
     db_path = get_test_db_path(run_dir)
     assert db_path.exists()
     
-    # Verify workspace_info contains entries for both workspaces
+    # Verify workspace_info contains the extracted workspace entries
     conn = sqlite3.connect(str(db_path))
     cursor = conn.execute("SELECT workspace_id FROM workspace_info")
     workspace_ids = {row[0] for row in cursor.fetchall()}
     conn.close()
     
-    # At least one workspace should be extracted (both if cursor support is implemented)
     assert len(workspace_ids) >= 1
     assert copilot_workspace["workspace_id"] in workspace_ids
 
@@ -256,31 +257,37 @@ def test_extraction_creates_code_metrics_when_edits_present(
     # Check code_metrics has rows (if edits were extracted)
     cursor = conn.execute("SELECT COUNT(*) FROM code_metrics")
     metrics_count = cursor.fetchone()[0]
-    
-    # Note: The fixture includes chatEditingSessions with edit data
-    # If edits were successfully extracted, we should have code_metrics rows
-    if metrics_count > 0:
-        # Verify row structure
-        cursor = conn.execute("""
-            SELECT file_path, lines_added, lines_removed
-            FROM code_metrics
-            LIMIT 5
-        """)
-        rows = cursor.fetchall()
-        
-        for file_path, lines_added, lines_removed in rows:
-            assert file_path is not None, "file_path should be populated"
-            assert isinstance(lines_added, int), "lines_added should be integer"
-            assert isinstance(lines_removed, int), "lines_removed should be integer"
-        
-        # Check turns.code_tokens > 0 for turns with edits
-        cursor = conn.execute("""
-            SELECT COUNT(*) FROM turns 
-            WHERE code_tokens > 0
-        """)
-        turns_with_code_tokens = cursor.fetchone()[0]
-        # May or may not have code tokens depending on how edits link to turns
-        # Just verify the query runs without error
+
+    assert metrics_count > 0, "Expected code_metrics rows for fixture with chatEditingSessions"
+
+    # Verify row structure
+    cursor = conn.execute("""
+        SELECT request_id, file_path, lines_added, lines_removed
+        FROM code_metrics
+        ORDER BY request_id
+    """)
+    rows = cursor.fetchall()
+
+    for request_id, file_path, lines_added, lines_removed in rows:
+        assert request_id is not None and request_id != "", "request_id should be populated"
+        assert file_path is not None, "file_path should be populated"
+        assert isinstance(lines_added, int), "lines_added should be integer"
+        assert isinstance(lines_removed, int), "lines_removed should be integer"
+
+    metrics_by_request = {
+        request_id: (lines_added, lines_removed)
+        for request_id, _file_path, lines_added, lines_removed in rows
+    }
+    assert metrics_by_request.get("req-edit-001") == (2, 0)
+    assert metrics_by_request.get("req-edit-002") == (3, 0)
+
+    # Check turns.code_tokens > 0 for turns with edits
+    cursor = conn.execute("""
+        SELECT COUNT(*) FROM turns 
+        WHERE code_tokens > 0
+    """)
+    turns_with_code_tokens = cursor.fetchone()[0]
+    assert turns_with_code_tokens > 0, "Expected turns.code_tokens > 0 when edit content is present"
     
     conn.close()
 

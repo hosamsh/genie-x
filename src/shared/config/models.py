@@ -142,7 +142,8 @@ class ModelDefaultsConfig:
     
     enabled: bool = True
     copilot: Dict[str, Any] = field(default_factory=dict)  # timeline + default
-    cursor: Dict[str, Any] = field(default_factory=dict)   # timeline + default
+    claude_code: Dict[str, Any] = field(default_factory=dict)  # timeline + default
+    copilot_cli: Dict[str, Any] = field(default_factory=dict)  # timeline + default
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ModelDefaultsConfig":
@@ -150,7 +151,8 @@ class ModelDefaultsConfig:
         return cls(
             enabled=data.get("enabled", True),
             copilot=data.get("copilot", {}),
-            cursor=data.get("cursor", {}),
+            claude_code=data.get("claude_code", {}),
+            copilot_cli=data.get("copilot_cli", {}),
         )
 
 

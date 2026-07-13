@@ -390,66 +390,6 @@ def copilot_workspace_with_long_text(tmp_path):
         "expected_original_text": long_repetitive_text
     }
 
-
-@pytest.fixture
-def cursor_workspace(tmp_path):
-    """T0-2: Synthetic Cursor workspace fixture.
-    
-    Creates minimal valid Cursor workspace structure with state.vscdb
-    
-    Returns:
-        Dict with 'workspace_id', 'path', 'workspace_folder'
-    """
-    workspace_id = "test-cursor-workspace-002"
-    workspace_folder = str(tmp_path / "cursor-project")
-    
-    # Create workspace storage
-    ws_path = tmp_path / "cursor_storage" / workspace_id
-    ws_path.mkdir(parents=True)
-    
-    # Create workspace.json
-    workspace_json = {
-        "folder": f"file:///{workspace_folder.replace(chr(92), '/')}"
-    }
-    (ws_path / "workspace.json").write_text(json.dumps(workspace_json), encoding="utf-8")
-    
-    # Create state.vscdb with composer bubbles
-    db_path = ws_path / "state.vscdb"
-    conn = sqlite3.connect(str(db_path))
-    conn.execute("CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value TEXT)")
-    
-    # Minimal bubble structure
-    bubble_data = {
-        "version": 1,
-        "bubbles": [
-            {
-                "type": 1,  # User bubble
-                "text": "Test cursor message",
-                "createdAt": int(datetime.now(timezone.utc).timestamp() * 1000)
-            },
-            {
-                "type": 2,  # Assistant bubble
-                "text": "Test cursor response",
-                "createdAt": int(datetime.now(timezone.utc).timestamp() * 1000) + 1000
-            }
-        ]
-    }
-    
-    conn.execute(
-        "INSERT INTO ItemTable (key, value) VALUES (?, ?)",
-        ("workbench.panel.aichat.view.aichat.chatdata", json.dumps(bubble_data))
-    )
-    conn.commit()
-    conn.close()
-    
-    return {
-        "workspace_id": workspace_id,
-        "path": ws_path,
-        "workspace_folder": workspace_folder,
-        "storage_root": tmp_path / "cursor_storage"
-    }
-
-
 @pytest.fixture
 def claude_workspace(tmp_path):
     """T0-2: Synthetic Claude Code workspace fixture.
@@ -500,8 +440,6 @@ def make_test_config(tmp_path):
     """
     def _make_config(
         copilot_storage=None,
-        cursor_storage=None,
-        cursor_global_storage=None,
         claude_dir=None,
         copilot_cli_session_state_dir=None,
     ) -> Path:
@@ -509,8 +447,6 @@ def make_test_config(tmp_path):
         
         Args:
             copilot_storage: Path to copilot workspace storage
-            cursor_storage: Path to cursor workspace storage  
-            cursor_global_storage: Path to cursor global storage
             claude_dir: Path to .claude directory
             copilot_cli_session_state_dir: Path to copilot CLI session-state dir
             
@@ -522,10 +458,6 @@ def make_test_config(tmp_path):
             "extract": {
                 "copilot": {
                     "workspace_storage": str(copilot_storage) if copilot_storage else str(tmp_path / "empty_copilot")
-                },
-                "cursor": {
-                    "workspace_storage": str(cursor_storage) if cursor_storage else str(tmp_path / "empty_cursor"),
-                    "global_storage": str(cursor_global_storage) if cursor_global_storage else str(tmp_path / "empty_cursor_global")
                 },
                 "claude_code": {
                     "claude_dir": str(claude_dir) if claude_dir else str(tmp_path / "empty_claude")

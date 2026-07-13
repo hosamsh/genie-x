@@ -14,6 +14,19 @@ const WorkspacePage = {
     currentView: 'dashboard',  // 'dashboard' or 'session'
 
     /**
+     * Return the deep-linked session id from the current URL, if any.
+     */
+    getDeepLinkedSessionId() {
+        const pathParts = window.location.pathname.split('/');
+        const view = pathParts[3];
+        const sessionId = pathParts[4];
+        if (view === 'session' && sessionId) {
+            return sessionId;
+        }
+        return null;
+    },
+
+    /**
      * Initialize the workspace page
      */
     init() {
@@ -83,11 +96,9 @@ const WorkspacePage = {
      * Restore view state from URL
      */
     restoreViewFromUrl() {
-        const pathParts = window.location.pathname.split('/');
-        const view = pathParts[3]; // 'session' or undefined
-        const sessionId = pathParts[4]; // session ID or undefined
+        const sessionId = this.getDeepLinkedSessionId();
         
-        if (view === 'session' && sessionId) {
+        if (sessionId) {
             // Restore session view
             Sessions.currentId = sessionId;
             this.selectSession(sessionId, true); // true = skipHistory (we're already in history)
@@ -257,7 +268,7 @@ const WorkspacePage = {
         try {
             dropdown.innerHTML = '<div class="workspace-dropdown-loading">Loading workspaces...</div>';
             
-            const response = await fetch('/api/browse/workspaces?page=1&page_size=500');
+            const response = await fetch('/api/browse/workspaces?page=1&page_size=500&include_live=true');
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             
             const data = await response.json();
@@ -417,7 +428,12 @@ const WorkspacePage = {
      * Load workspace status and trigger extraction if needed
      */
     async loadWorkspaceStatus() {
-        this.showLoading('Checking workspace status...');
+        const deepLinkedSessionId = this.getDeepLinkedSessionId();
+        if (deepLinkedSessionId) {
+            this.preloadDeepLinkedSession(deepLinkedSessionId);
+        } else {
+            this.showLoading('Checking workspace status...');
+        }
         
         try {
             const response = await fetch(`/api/browse/workspace/${this.workspaceId}/status`);
@@ -438,19 +454,22 @@ const WorkspacePage = {
             
             if (this.workspaceStatus.is_extracted) {
                 this.updateStatusBadge();
-                await this.loadSessions();
-                await this.loadDashboard();
-                this.showMainContent();
-                
-                // Now that sessions are loaded and content is visible,
-                // restore the view from URL (handles deep links to sessions).
-                // This ensures turn text clamps work correctly since the DOM
-                // is visible and scrollHeight can be measured accurately.
-                this.restoreViewFromUrl();
+                if (deepLinkedSessionId) {
+                    this.showMainContent();
+                    void this.loadSessions();
+                    void this.loadDashboard();
+                } else {
+                    this.showMainContent();
+                    void this.loadSessions();
+                    void this.loadDashboard();
+
+                    // Keep URL state in sync after the main content is visible.
+                    this.restoreViewFromUrl();
+                }
                 
                 // Check if source has newer data
                 if (this.workspaceStatus.source_available) {
-                    this.checkSyncStatus();
+                    setTimeout(() => void this.checkSyncStatus(), 2000);
                 }
             } else {
                 await this.extractWorkspace();
@@ -584,28 +603,7 @@ const WorkspacePage = {
      */
     async closeExtractionModal() {
         Modals.closeExtraction();
-        this.showLoading('Loading workspace data...');
-        
-        try {
-            const statusResponse = await fetch(`/api/browse/workspace/${this.workspaceId}/status`);
-            if (statusResponse.ok) {
-                this.workspaceStatus = await statusResponse.json();
-                this.workspaceAgents = this.workspaceStatus.agents || [];
-                this.updateAgentsBadges();
-            }
-            
-            await this.loadSessions();
-            await this.loadDashboard();
-            this.updateStatusBadge();
-            this.showMainContent();
-            this.showDashboard();
-        } catch (error) {
-            console.error('Failed to load workspace after extraction:', error);
-            this.showExtractionStatus('error', 'Failed to Load', error.message, [
-                { label: 'Retry', onclick: 'WorkspacePage.loadWorkspaceStatus()' },
-                { label: 'Back to Browse', onclick: 'window.location.href="/browse"', secondary: true }
-            ]);
-        }
+        await this.loadWorkspaceStatus();
     },
 
     /**
@@ -616,15 +614,110 @@ const WorkspacePage = {
     },
 
     /**
+     * Reextract workspace from source, overwriting the current extraction.
+     */
+    async reextractWorkspace() {
+        const confirmed = window.confirm(
+            'Reextract this workspace from source and overwrite the current extracted data?'
+        );
+        if (!confirmed) {
+            return;
+        }
+
+        this.hideSyncWarning();
+        await this.extractWorkspace(true, false);
+    },
+
+    /**
      * Load sessions
      */
     async loadSessions() {
         try {
+            const container = document.getElementById('sessions-list');
+            if (container) {
+                container.innerHTML = `
+                    <div class="px-3 py-4 text-center text-terminal-gray text-sm font-mono">
+                        Loading sessions...
+                    </div>
+                `;
+            }
             const agents = await Sessions.load(this.workspaceId);
             this.workspaceAgents = agents.length > 0 ? agents : this.workspaceAgents;
             this.renderSessions();
+            if (Sessions.currentId) {
+                this.updateSelectedSessionHeader(Sessions.currentId);
+                document.querySelectorAll('.session-item').forEach(el => {
+                    el.classList.toggle('active', el.dataset.sessionId === Sessions.currentId);
+                });
+            }
         } catch (error) {
             console.error('Failed to load sessions:', error);
+        }
+    },
+
+    /**
+     * Preload a deep-linked session immediately, without waiting for the slow
+     * workspace sessions bootstrap.
+     */
+    preloadDeepLinkedSession(sessionId) {
+        Sessions.currentId = sessionId;
+        Turns.clearSearch();
+        this.showMainContent();
+        this.showSessionView(true);
+        this.updateSelectedSessionHeader(sessionId);
+
+        const mainContent = document.querySelector('.flex-1.overflow-y-auto');
+        if (mainContent) mainContent.scrollTop = 0;
+
+        void this.loadTurnsForSession(sessionId);
+    },
+
+    /**
+     * Update the session title/subtitle/stats using whatever metadata is
+     * currently available.
+     */
+    updateSelectedSessionHeader(sessionId) {
+        const session = Sessions.getById(sessionId);
+        document.getElementById('current-session-title').textContent =
+            Formatters.sessionTitle(session?.session_name, sessionId.substring(0, 12));
+        document.getElementById('current-session-subtitle').textContent =
+            session?.first_timestamp ? new Date(session.first_timestamp).toLocaleString() : 'Loading session metadata...';
+
+        const agentIconEl = document.getElementById('session-agent-icon');
+        if (agentIconEl && session?.agent) {
+            agentIconEl.innerHTML = AgentInfo.renderLogo(session.agent, 5);
+        } else if (agentIconEl) {
+            agentIconEl.innerHTML = '';
+        }
+
+        Sessions.renderStats(session);
+    },
+
+    /**
+     * Load turns for a session and render them.
+     */
+    async loadTurnsForSession(sessionId) {
+        try {
+            await Turns.load(sessionId);
+            if (!Sessions.getById(sessionId) && Turns.list.length > 0) {
+                const firstTurn = Turns.list[0];
+                if (firstTurn.session_name) {
+                    document.getElementById('current-session-title').textContent = Formatters.sessionTitle(firstTurn.session_name, sessionId.substring(0, 12));
+                }
+                if (firstTurn.timestamp_iso) {
+                    document.getElementById('current-session-subtitle').textContent = new Date(firstTurn.timestamp_iso).toLocaleString();
+                }
+                const agentIconEl = document.getElementById('session-agent-icon');
+                if (agentIconEl && firstTurn.agent_used) {
+                    agentIconEl.innerHTML = AgentInfo.renderLogo(firstTurn.agent_used, 5);
+                }
+            }
+            this.renderTurns();
+        } catch (error) {
+            console.error('Failed to load turns:', error);
+            document.getElementById('turns-container').innerHTML = `
+                <div class="text-center text-red-500">Failed to load turns: ${error.message}</div>
+            `;
         }
     },
 
@@ -673,33 +766,8 @@ const WorkspacePage = {
         const mainContent = document.querySelector('.flex-1.overflow-y-auto');
         if (mainContent) mainContent.scrollTop = 0;
         
-        // Find session info
-        const session = Sessions.getById(sessionId);
-        document.getElementById('current-session-title').textContent = 
-            session?.session_name || sessionId.substring(0, 12);
-        document.getElementById('current-session-subtitle').textContent = 
-            session?.first_timestamp ? new Date(session.first_timestamp).toLocaleString() : '';
-        
-        // Show agent icon next to session name
-        const agentIconEl = document.getElementById('session-agent-icon');
-        if (agentIconEl && session?.agent) {
-            agentIconEl.innerHTML = AgentInfo.renderLogo(session.agent, 5);
-        } else if (agentIconEl) {
-            agentIconEl.innerHTML = '';
-        }
-        
-        Sessions.renderStats(session);
-        
-        // Load turns
-        try {
-            await Turns.load(sessionId);
-            this.renderTurns();
-        } catch (error) {
-            console.error('Failed to load turns:', error);
-            document.getElementById('turns-container').innerHTML = `
-                <div class="text-center text-red-500">Failed to load turns: ${error.message}</div>
-            `;
-        }
+        this.updateSelectedSessionHeader(sessionId);
+        await this.loadTurnsForSession(sessionId);
     },
 
     /**
@@ -997,6 +1065,7 @@ window.filterTurns = (term) => WorkspacePage.filterTurns(term);
 window.clearTurnSearch = () => WorkspacePage.clearTurnSearch();
 window.showDashboard = () => WorkspacePage.showDashboard();
 window.refreshExtraction = () => WorkspacePage.refreshExtraction();
+window.reextractWorkspace = () => WorkspacePage.reextractWorkspace();
 window.syncWorkspace = () => WorkspacePage.syncWorkspace();
 window.closeExtractionModal = () => WorkspacePage.closeExtractionModal();
 

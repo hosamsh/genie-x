@@ -9,7 +9,7 @@
 
 ## 🔬 What is This?
 
-Every AI coding session you run — GitHub Copilot, Cursor, Claude Code, Copilot CLI — writes structured conversation data to local storage. That data is scattered across different formats and directories, and none of these tools let you search, compare, or analyze it.
+Every AI coding session you run — GitHub Copilot, Claude Code, and Copilot CLI — writes structured conversation data to local storage. That data is scattered across different formats and directories, and none of these tools let you search, compare, or analyze it.
 
 **Genie‑X** extracts those conversations into a single indexed database. You get full-text and semantic search across every session you've ever had, usage analytics per workspace, and a local web UI to browse it all. No cloud dependency, no API keys required for core functionality. It reads what's already on your machine.
 
@@ -31,12 +31,11 @@ Every AI coding session you run — GitHub Copilot, Cursor, Claude Code, Copilot
 
 ### ✨ Features
 
-- **Multi-Agent Extraction**: GitHub Copilot, Cursor, Claude Code, and GitHub Copilot CLI — each with a dedicated extractor plugin that handles the agent's native storage format
+- **Multi-Agent Extraction**: GitHub Copilot, Claude Code, and GitHub Copilot CLI — each with an extract2 parser that handles the agent's native storage format
 - **Web Dashboard**: Local web UI for browsing workspaces, viewing per-session analytics, and exploring full conversation threads
 - **Semantic + Keyword Search**: Sentence Transformers embeddings combined with SQLite FTS5 for both meaning-based and exact-match search across all extracted conversations
 - **CLI Interface**: Full command-line access for automation: list workspaces, extract, search, refresh
 - **Code Metrics**: Extracts complexity and size metrics from code artifacts in conversations (via `lizard`)
-- **Plugin Architecture**: Add support for new agents by dropping an extractor plugin into `src/extract_plugins/`
 - **Turn Merging**: Consecutive same-role messages are automatically merged so output always alternates user/assistant — consistent across all extractors
 
 ## 🚀 Quick Start
@@ -45,7 +44,7 @@ Every AI coding session you run — GitHub Copilot, Cursor, Claude Code, Copilot
 
 - Python 3.11 or higher
 - [uv](https://github.com/astral-sh/uv) - Fast Python package manager
-- One or more supported AI coding agents installed (GitHub Copilot / Cursor / Claude Code / GitHub Copilot CLI)
+- One or more supported AI coding agents installed (GitHub Copilot / Claude Code / GitHub Copilot CLI)
 
 ### Installation
 
@@ -63,10 +62,10 @@ Every AI coding session you run — GitHub Copilot, Cursor, Claude Code, Copilot
 
 ### Understanding Workspaces
 
-**Important:** Gennie-X does **not** create workspaces. Instead, it *discovers* existing workspaces from your AI coding agents (VS Code/Cursor/Claude Code). The tool reads the local storage where these agents save their conversation history.
+**Important:** Gennie-X does **not** create workspaces. Instead, it *discovers* existing workspaces from your AI coding agents. The tool reads the local storage where these agents save their conversation history.
 
 To have workspaces available:
-1. Use one of the supported agents (GitHub Copilot in VS Code, Cursor, or Claude Code)
+1. Use one of the supported agents (GitHub Copilot in VS Code, Claude Code, or Copilot CLI)
 2. Open a project/folder in the agent
 3. Start at least one chat conversation with the AI assistant
 4. The agent will save this data to its local storage (auto-detected by Gennie-X)
@@ -108,7 +107,7 @@ uv run python run_cli.py --list
 uv run python run_cli.py --extract <workspace-id> --run-dir data/<dir-name>
 
 # Extract all workspaces for a specific agent
-uv run python run_cli.py --extract --all --agent <copilot|cursor|claude_code|copilot_cli> --run-dir data/<dir-name>
+uv run python run_cli.py --extract --all --agent <copilot|claude_code|copilot_cli> --run-dir data/<dir-name>
 
 # Refresh an existing workspace (incremental sync; only new/changed turns)
 uv run python run_cli.py --extract <workspace-id> --run-dir data/<dir-name>
@@ -153,17 +152,6 @@ If you want faster embedding generation, you can enable GPU support:
 
 To choose the right CUDA wheel: (1) check your NVIDIA driver/CUDA capability (e.g., from `nvidia-smi`), (2) pick the matching CUDA version on the PyTorch install page (e.g., cu118 or cu121), and (3) use that index URL in requirements-gpu.txt.
 
-### Adding a New Agent
-
-1. Create `src/extract_plugins/your_agent/`
-2. Implement `agent.py` with `AgentExtractor` interface
-3. Add `metadata.json` for display info
-4. Add config section to `config/config.yaml`
-5. Test extraction and enrichment
-
-See [Agent Extractor Interface Docs](src/extract_plugins/readme.md)
-
-
 ## 🧪 Running Tests
 
 See [tests/README.md](tests/README.md) for full details.
@@ -173,7 +161,7 @@ See [tests/README.md](tests/README.md) for full details.
 uv run pytest tests/unit/ -x -q
 
 # Run a specific test file
-uv run pytest tests/unit/test_copilot_cli_extract.py -x -q
+uv run pytest tests/unit/test_extract_copilot_cli.py -x -q
 ```
 
 > **Note**: Always use `uv run pytest` — do not use `python -m pytest` or activate a `.venv` manually.

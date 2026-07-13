@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 from src.shared.logging.logger import get_logger, setup_logging
 from src.shared.config.config_loader import load_env, get_config
 from src.shared.io.run_dir import require_db_path
-from src.pipeline.extraction.workspace_discovery import (
+from src.shared.workspace_discovery import (
     list_all_workspaces,
     list_workspaces_by_page,
     find_workspace,
@@ -31,7 +31,7 @@ Examples:
   python run_cli.py --extract abc123-def456-ghi789 --run-dir data/runs/my-run
   python run_cli.py --extract --all --run-dir data/runs/all-workspaces
   python run_cli.py --extract abc123 def456 --run-dir data/runs/multi
-  python run_cli.py --extract --all --agent cursor --run-dir data/cursor-runs
+    python run_cli.py --extract --all --agent copilot_cli --run-dir data/copilot-cli-runs
   python run_cli.py --search "koko nutty" --run-dir data/runs/my-run
   python run_cli.py --search "koko nutty" --search-mode semantic --assistant-only --run-dir data/runs/my-run --json
   python run_cli.py --reindex --run-dir data/runs/my-run
@@ -84,7 +84,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     
     # Workspace selection
     parser.add_argument("--all", action="store_true", help="Process all workspaces (use with --extract)")
-    parser.add_argument("--agent", type=str, help="Filter to specific agent (e.g., 'copilot', 'cursor')")
+    parser.add_argument(
+        "--agent",
+        type=str,
+        help="Filter to specific agent (e.g., 'copilot', 'copilot_cli', 'claude_code')",
+    )
     
     # Run configuration
     parser.add_argument("--run-dir", type=str, help="Run directory (required for --extract)")

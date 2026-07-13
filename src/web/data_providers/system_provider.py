@@ -20,6 +20,8 @@ _WORD_CLOUD_CACHE: Dict[str, Any] = {
     "payload": None,
 }
 
+_WORD_CLOUD_MAX_CHARS_PER_TEXT = 2000
+
 
 def _safe_int(value: Any, default: int = 0) -> int:
     try:
@@ -215,6 +217,7 @@ class SystemDataProvider:
         top_models: int = 8,
         max_words: int = 500,
         exclude_patterns: Optional[List[str]] = None,
+        max_chars_per_text: int = _WORD_CLOUD_MAX_CHARS_PER_TEXT,
         **kwargs
     ) -> Dict[str, Any]:
         """Return word-cloud lists for cleaned turn text.
@@ -260,7 +263,10 @@ class SystemDataProvider:
         except sqlite3.OperationalError:
             max_turn_id = 0
 
-        cache_key = f"turns_max_id={max_turn_id}|minlen={min_word_length}|top_models={top_models}|max_words={max_words_per_group}"
+        cache_key = (
+            f"turns_max_id={max_turn_id}|minlen={min_word_length}|top_models={top_models}"
+            f"|max_words={max_words_per_group}|max_chars={max_chars_per_text}"
+        )
         now = time.time()
         if (
             _WORD_CLOUD_CACHE.get("key") == cache_key
@@ -303,22 +309,26 @@ class SystemDataProvider:
         
         # We only track specific models for per-model clouds
         # Delegate the heavy lifting to shared helper
-        cols = "role, COALESCE(model_id, '') as model_id, text"
+        cols = "role, COALESCE(model_id, '') as model_id, substr(text, 1, ?) as text"
+        params: tuple[Any, ...]
         if has_thinking:
-            cols += ", thinking_text"
+            cols += ", substr(thinking_text, 1, ?) as thinking_text"
+            params = (max_chars_per_text, max_chars_per_text)
         else:
             cols += ", NULL as thinking_text"
+            params = (max_chars_per_text,)
 
         sql = f"SELECT {cols} FROM turns WHERE (text IS NOT NULL AND text != '') OR (thinking_text IS NOT NULL AND thinking_text != '')"  # nosec B608
 
         word_lists = generate_word_lists(
             self.conn,
             sql,
-            params=(),
+            params=params,
             top_model_ids=top_model_ids,
             min_word_length=min_word_length,
             max_words_per_group=max_words_per_group,
             exclude_patterns=[p.pattern for p in compiled_patterns] if compiled_patterns else None,
+            max_chars_per_text=max_chars_per_text,
         )
 
         # Build result payload
@@ -448,7 +458,7 @@ class SystemDataProvider:
         return results
 
     def get_agentic_coding_time_per_agent(self, **kwargs) -> List[Dict[str, Any]]:
-        """Get aggregated agentic coding time by agent (Copilot vs Cursor vs Claude...).
+        """Get aggregated agentic coding time by supported agent.
 
         Returns distribution in hours for charting.
         """
@@ -732,7 +742,7 @@ class SystemDataProvider:
         return [{"value": row[0], "count": row[1]} for row in cursor.fetchall()]
 
     def get_agent_distribution(self) -> List[Dict[str, Any]]:
-        """Get distribution of turns by agent (Copilot vs Cursor)."""
+        """Get distribution of turns by supported agent."""
         cursor = self.conn.execute(
             """SELECT COALESCE(agent_used, 'unknown') as agent, COUNT(*) as cnt
                FROM turns
@@ -748,12 +758,12 @@ class SystemDataProvider:
         if not agent:
             return "Unknown"
         agent_lower = str(agent).strip().lower()
+        if "copilot_cli" in agent_lower:
+            return "Copilot CLI"
         if "copilot" in agent_lower:
             return "Copilot"
-        if "cursor" in agent_lower:
-            return "Cursor"
         if "claude" in agent_lower:
-            return "Claude"
+            return "Claude Code"
         return str(agent).strip().capitalize()
 
     def get_model_distribution(self, **kwargs) -> List[Dict[str, Any]]:

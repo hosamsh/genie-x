@@ -53,6 +53,23 @@ const Formatters = {
     },
 
     /**
+     * Normalize a session title for display.
+     */
+    sessionTitle(value, fallback = '', maxLength = 120) {
+        let text = String(value || fallback || '').trim();
+        if (!text) return '';
+
+        const firstNonEmptyLine = text.split(/\r?\n/).find(line => line.trim() !== '');
+        if (firstNonEmptyLine) {
+            text = firstNonEmptyLine.trim();
+        }
+
+        text = text.replace(/\s+/g, ' ').trim();
+        if (text.length <= maxLength) return text;
+        return text.slice(0, Math.max(1, maxLength - 1)).trimEnd() + '…';
+    },
+
+    /**
      * Get description for a task value from custom labels
      */
     getTaskValueDescription(value, labels = null) {

@@ -194,10 +194,10 @@ def test_web_api_search(
             "semantic_min_score": 0.5,
             "semantic_strict_min_score": 0.7,
         },
-        "sources": {
+        "extract": {
             "copilot": {"workspace_storage": str(copilot_workspace["storage_root"])},
-            "cursor": {"workspace_storage": "", "global_storage": ""},
-            "claude_code": {"claude_dir": ""}
+            "claude_code": {"claude_dir": ""},
+            "copilot_cli": {"session_state_dir": ""}
         },
         "llm_models": {},
         "model_defaults": {"enabled": False},

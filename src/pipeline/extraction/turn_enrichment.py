@@ -1,6 +1,7 @@
 """Converts raw Turns to enriched Turns with tokens, languages, metrics, and cleaned text."""
 from __future__ import annotations
 
+import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Union
 
@@ -18,6 +19,10 @@ logger = get_logger(__name__)
 
 _text_shrinker = None
 
+
+def _elapsed_ms(start: float) -> float:
+    return (time.perf_counter() - start) * 1000
+
 def _get_text_shrinker() -> TextShrinker:
     """Get or create the module-level TextShrinker instance."""
     global _text_shrinker
@@ -31,12 +36,12 @@ def _resolve_model_fallback(agent_used: Optional[str], timestamp_ms: Optional[in
     
     Uses model_defaults config to find the appropriate default model:
     1. If model_defaults is disabled, returns None
-    2. Looks up the agent-specific config (copilot, cursor, etc.)
+    2. Looks up the agent-specific config for supported agents
     3. Finds the most recent timeline entry before the turn's timestamp
     4. Falls back to the agent's "default" if no timeline match
     
     Args:
-        agent_used: The agent name (e.g., "copilot", "cursor")
+        agent_used: The agent name (e.g., "copilot", "claude_code")
         timestamp_ms: The turn's timestamp in milliseconds
         
     Returns:
@@ -52,12 +57,13 @@ def _resolve_model_fallback(agent_used: Optional[str], timestamp_ms: Optional[in
         return None
     
     # Get agent-specific config
-    agent_config: Dict[str, Any] = {}
     agent_lower = agent_used.lower()
-    if agent_lower == "copilot":
-        agent_config = model_defaults.copilot
-    elif agent_lower == "cursor":
-        agent_config = model_defaults.cursor
+    agent_defaults: Dict[str, Dict[str, Any]] = {
+        "copilot": model_defaults.copilot,
+        "claude_code": model_defaults.claude_code,
+        "copilot_cli": model_defaults.copilot_cli,
+    }
+    agent_config = agent_defaults.get(agent_lower, {})
     
     if not agent_config:
         return None
@@ -252,6 +258,8 @@ def enrich_turn(base: Turn) -> EnrichedTurn:
         ts=base.ts,
         files=list(base.files),
         tools=list(base.tools),
+        parent_session_id=base.parent_session_id,
+        relationship_type=base.relationship_type,
         extra=extra,
         code_edits=enriched_edits,
         model_id=model_id or "",
@@ -275,8 +283,10 @@ def enrich_turns(base_turns: List[Union[Turn, EnrichedTurn]], calculate_metrics:
     if not base_turns:
         return []
     
+    perf_start = time.perf_counter()
     logger.progress(f"  Enriching {len(base_turns)} turns...")
     
+    checkpoint = time.perf_counter()
     enriched: List[EnrichedTurn] = []
     for base in base_turns:
         if isinstance(base, EnrichedTurn):
@@ -284,18 +294,26 @@ def enrich_turns(base_turns: List[Union[Turn, EnrichedTurn]], calculate_metrics:
         else:
             turn = enrich_turn(base)
             enriched.append(turn)
+    logger.info(
+        f"[PERF] enrich_turns | enrich_each_turn: {_elapsed_ms(checkpoint):.1f}ms "
+        f"({len(base_turns)} turns)"
+    )
     
     logger.progress("  Adjusting response times...")
+    checkpoint = time.perf_counter()
     calculate_response_times(enriched)
+    logger.info(f"[PERF] enrich_turns | calculate_response_times: {_elapsed_ms(checkpoint):.1f}ms")
     
     logger.progress("  Calculating static code metrics...")
     if calculate_metrics:
+        checkpoint = time.perf_counter()
         for turn in enriched:
             calculate_turn_metrics(turn)
+        logger.info(f"[PERF] enrich_turns | calculate_turn_metrics: {_elapsed_ms(checkpoint):.1f}ms")
     
     total_edits = sum(len(t.code_edits) for t in enriched)
     if total_edits > 0:
         logger.progress(f"    Enriched {total_edits} code edits with metrics")
     
+    logger.info(f"[PERF] enrich_turns | TOTAL: {_elapsed_ms(perf_start):.1f}ms")
     return enriched
-

@@ -1,6 +1,6 @@
 """Path utilities for file URI handling and normalization.
 
-Shared utilities used by both Copilot and Cursor extractors.
+Shared utilities used by source parsers.
 """
 import re
 from pathlib import Path

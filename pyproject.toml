@@ -5,14 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "genie-x"
 # Version is defined in src/__version__.py - single source of truth
-description = "Extract and analyze Copilot/Cursor chat sessions"
+description = "Extract and analyze Copilot, Claude Code, and Copilot CLI chat sessions"
 requires-python = ">=3.11"
 readme = "README.md"
 license = { file = "LICENSE" }
 authors = [
     { name = "Hosam Shahin" },
 ]
-keywords = ["ai", "copilot", "cursor", "claude", "chat", "extraction", "analytics", "semantic-search"]
+keywords = ["ai", "copilot", "copilot-cli", "claude", "chat", "extraction", "analytics", "semantic-search"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",

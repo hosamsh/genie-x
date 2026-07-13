@@ -29,6 +29,25 @@ def test_web_api_version_endpoint(web_client):
 
 
 @pytest.mark.integration
+def test_web_api_agents_endpoint_includes_versioned_icon_url(web_client):
+    """Verify agent metadata includes cache-busted icon URLs."""
+    if web_client is None:
+        pytest.skip("Web client unavailable")
+
+    response = web_client.get("/api/agents/")
+
+    assert response.status_code == 200, f"Agents endpoint failed: {response.text}"
+
+    data = response.json()
+    assert "agents" in data, "Response missing agents key"
+
+    codex = next((agent for agent in data["agents"] if agent.get("id") == "codex"), None)
+    assert codex is not None, "Expected codex agent metadata"
+    assert codex.get("icon") == "icon.png"
+    assert str(codex.get("icon_url") or "").startswith("/api/agents/codex/icon?v=")
+
+
+@pytest.mark.integration
 def test_web_api_system_stats_empty_state(web_client, run_dir, monkeypatch):
     """T1-13: Verify /api/system/stats handles empty database gracefully."""
     if web_client is None:
@@ -207,10 +226,10 @@ def test_web_api_search(web_client, copilot_workspace, run_dir, monkeypatch):
             "semantic_min_score": 0.5,
             "semantic_strict_min_score": 0.7,
         },
-        "sources": {
+        "extract": {
             "copilot": {"workspace_storage": str(copilot_workspace["storage_root"])},
-            "cursor": {"workspace_storage": "", "global_storage": ""},
-            "claude_code": {"claude_dir": ""}
+            "claude_code": {"claude_dir": ""},
+            "copilot_cli": {"session_state_dir": ""}
         },
         "llm_models": {},
         "model_defaults": {"enabled": False},

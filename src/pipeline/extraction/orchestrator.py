@@ -12,11 +12,16 @@ from src.shared.database.db_schema import init_shared_db
 from src.shared.io.run_dir import get_db_path
 from src.shared.logging.logger import get_logger
 from src.shared.models.workspace import WorkspaceExtractionResult
+from src.shared.workspace_discovery import find_workspace
+from .embedding_postprocess import run_embedding_postprocess
 from .extractor import extract_workspace as _extract_workspace_data
 from .storage import store_extraction_result
-from .workspace_discovery import find_workspace
 
 logger = get_logger(__name__)
+
+
+def _elapsed_ms(start: float) -> float:
+    return (time.perf_counter() - start) * 1000
 
 
 def init_run_directory(run_dir: Optional[str] = None) -> Path:
@@ -74,11 +79,14 @@ def extract_single_workspace(
         WorkspaceExtractionResult with extraction status and metadata.
     """
     timer = time.time()
+    perf_start = time.perf_counter()
     duration_minutes = lambda: round((time.time() - timer) / 60, 2)
 
     logger.banner(f"Extracting Workspace: {workspace_id}")
 
+    checkpoint = time.perf_counter()
     ws_storage = find_workspace(workspace_id)
+    logger.info(f"[PERF] extract_single_workspace {workspace_id} | find_workspace: {_elapsed_ms(checkpoint):.1f}ms")
     if not ws_storage:
         logger.error(f"Workspace not found: {workspace_id}")
         return WorkspaceExtractionResult(
@@ -97,15 +105,30 @@ def extract_single_workspace(
     logger.progress(f"Found workspace in: {agent_name}")
 
     try:
+        checkpoint = time.perf_counter()
         extraction_result = _extract_workspace_data(workspace_id, agent_filter=agent_filter)
+        logger.info(
+            f"[PERF] extract_single_workspace {workspace_id} | extract_workspace: {_elapsed_ms(checkpoint):.1f}ms"
+        )
         logger.progress(
             f"[OK] Extracted {extraction_result.session_count} sessions, "
             f"{extraction_result.turn_count} turns"
         )
 
+        checkpoint = time.perf_counter()
         storage_result = store_extraction_result(extraction_result, db_path, force_refresh)
+        logger.info(
+            f"[PERF] extract_single_workspace {workspace_id} | store_extraction_result: {_elapsed_ms(checkpoint):.1f}ms"
+        )
         if not storage_result.success:
             raise RuntimeError(f"Storage failed: {storage_result.error}")
+
+        checkpoint = time.perf_counter()
+        run_embedding_postprocess(storage_result, db_path)
+        logger.info(
+            f"[PERF] extract_single_workspace {workspace_id} | embedding_postprocess: "
+            f"{_elapsed_ms(checkpoint):.1f}ms"
+        )
 
         _print_workspace_banner(
             workspace_id,
@@ -115,6 +138,7 @@ def extract_single_workspace(
             storage_result.turn_count,
         )
 
+        logger.info(f"[PERF] extract_single_workspace {workspace_id} | TOTAL: {_elapsed_ms(perf_start):.1f}ms")
         return storage_result
 
     except Exception as exc:
@@ -150,7 +174,10 @@ async def extract_workspaces(
         Dict mapping workspace_id to WorkspaceExtractionResult.
     """
     # Initialize run directory and database
+    perf_start = time.perf_counter()
+    checkpoint = time.perf_counter()
     run_path = init_run_directory(run_dir)
+    logger.info(f"[PERF] extract_workspaces | init_run_directory: {_elapsed_ms(checkpoint):.1f}ms")
     
     stats: Dict[str, WorkspaceExtractionResult] = {}
     successful = skipped = failed = 0
@@ -160,6 +187,7 @@ async def extract_workspaces(
     for i, workspace_id in enumerate(workspace_ids, 1):
             logger.banner(f"Starting to process workspace {i}/{len(workspace_ids)}: {workspace_id}")
             start_time = time.time()
+            workspace_perf_start = time.perf_counter()
             duration = lambda: round((time.time() - start_time) / 60, 2)
 
             # Call the single-workspace function
@@ -183,8 +211,12 @@ async def extract_workspaces(
                 successful += 1
             
             stats[workspace_id] = result
+            logger.info(
+                f"[PERF] extract_workspaces | workspace {workspace_id}: {_elapsed_ms(workspace_perf_start):.1f}ms"
+            )
 
     pipeline_time = (datetime.now() - pipeline_start).total_seconds()
+    logger.info(f"[PERF] extract_workspaces | TOTAL: {_elapsed_ms(perf_start):.1f}ms")
     _print_summary(run_path, workspace_ids, successful, skipped, failed, pipeline_time)
     return stats
 

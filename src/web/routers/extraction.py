@@ -9,7 +9,7 @@ import asyncio
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from src.pipeline.extraction.workspace_discovery import find_workspace
+from src.shared.workspace_discovery import find_workspace
 from src.web.services.extraction_service import (
     create_bulk_extraction_run,
     create_extraction_run,

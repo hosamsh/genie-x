@@ -283,7 +283,7 @@ def count_loc(workspace_folder: str) -> LOCResult:
     # Get all known workspace folders to filter out nested workspaces
     # This prevents counting the same code multiple times when a parent folder
     # contains multiple child workspace folders
-    from src.pipeline.extraction.workspace_discovery import get_all_workspace_folders
+    from src.shared.workspace_discovery import get_all_workspace_folders
     all_workspace_folders = get_all_workspace_folders()
     current_workspace_normalized = workspace_path.as_posix().lower()
     

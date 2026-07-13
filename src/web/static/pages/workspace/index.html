@@ -207,7 +207,33 @@
             <!-- Dashboard View -->
             <div id="dashboard-view">
                 <div class="page-heading mb-6">
-                    <h2 class="page-title">WORKSPACE_STATS</h2>
+                    <div class="flex items-start justify-between gap-3 flex-wrap">
+                        <h2 class="page-title">WORKSPACE_STATS</h2>
+                        <div class="flex items-center gap-2 flex-shrink-0">
+                            <button onclick="refreshExtraction()" 
+                                    class="btn btn-secondary text-xs py-1 px-3"
+                                    title="Re-run extraction without clearing existing extracted data first">
+                                <span class="material-symbols-outlined text-sm">refresh</span>
+                                RERUN
+                            </button>
+                            <button onclick="reextractWorkspace()" 
+                                    class="btn btn-primary text-xs py-1 px-3"
+                                    title="Delete and rebuild this workspace extraction from source">
+                                <span class="material-symbols-outlined text-sm">restart_alt</span>
+                                REEXTRACT
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="dashboard-card mb-4 px-4 py-3">
+                    <p class="text-[11px] text-terminal-gray font-mono leading-relaxed">
+                        <span class="text-white">RERUN</span> keeps the current extraction and checks for newer data.
+                        <span class="text-white">REEXTRACT</span> deletes the current extraction for this workspace and rebuilds it from source.
+                    </p>
+                    <p class="mt-1 text-[11px] text-terminal-gray/80 font-mono leading-relaxed">
+                        Use <span class="text-white">REEXTRACT</span> when you want newly added extraction features to be applied from a clean rebuild.
+                    </p>
                 </div>
                 
                
@@ -221,11 +247,6 @@
                                 <span class="material-symbols-outlined">analytics</span>
                                 EXTRACTION_METRICS
                             </h3>
-                            <button onclick="refreshExtraction()" 
-                                    class="btn btn-secondary text-xs py-1 px-3">
-                                <span class="material-symbols-outlined text-sm">refresh</span>
-                                RERUN
-                            </button>
                         </div>
                         <div id="extraction-metrics" class="grid grid-cols-2 md:grid-cols-4 gap-4">
                             <div class="metric-card">
@@ -390,10 +411,10 @@
     <script src="/static/js/sse-handler.js?v=1"></script>
     <script src="/static/js/carousel.js?v=1"></script>
     <script src="/static/js/sessions.js?v=1"></script>
-    <script src="/static/js/turns.js?v=1"></script>
-    <script src="/static/pages/workspace/page.js?v=1"></script>
+    <script src="/static/js/turns.js?v=2"></script>
+    <script src="/static/pages/workspace/page.js?v=6"></script>
     <script src="/static/js/nav-init.js?v=1"></script>
-    <script src="/static/js/navigation.js?v=1"></script>
+    <script src="/static/js/navigation.js?v=3"></script>
 
     <script>
         function toggleWorkspaceNav(event) {

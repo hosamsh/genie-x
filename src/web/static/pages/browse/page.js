@@ -23,8 +23,83 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (window.AgentInfo && !window.AgentInfo.loaded) {
         await window.AgentInfo.init();
     }
+    populateAgentFilterOptions();
     loadWorkspaces();
 });
+
+function getAgentFilterValue() {
+    const agentFilter = document.getElementById('agent-filter');
+    return agentFilter?.value || 'all';
+}
+
+function buildWorkspacesQuery() {
+    const params = new URLSearchParams({
+        page: String(currentPage),
+        page_size: String(pageSize),
+        include_live: 'true',
+    });
+
+    const agentFilter = getAgentFilterValue();
+    if (agentFilter !== 'all') {
+        params.set('agent', agentFilter);
+    }
+
+    return params.toString();
+}
+
+function populateAgentFilterOptions() {
+    const agentFilter = document.getElementById('agent-filter');
+    if (!agentFilter) {
+        return;
+    }
+
+    const selectedAgent = agentFilter.value || 'all';
+    const optionsById = new Map();
+
+    if (window.AgentInfo?.agents) {
+        for (const [agentId, info] of Object.entries(window.AgentInfo.agents)) {
+            if (agentId === 'default') {
+                continue;
+            }
+            optionsById.set(agentId, {
+                id: agentId,
+                name: info.name || agentId,
+            });
+        }
+    }
+
+    for (const workspace of allWorkspaces) {
+        for (const agentId of workspace.agents || []) {
+            if (!optionsById.has(agentId)) {
+                const info = window.AgentInfo?.get(agentId);
+                optionsById.set(agentId, {
+                    id: agentId,
+                    name: info?.name || agentId,
+                });
+            }
+        }
+    }
+
+    const sortedOptions = Array.from(optionsById.values()).sort((left, right) =>
+        left.name.localeCompare(right.name)
+    );
+
+    agentFilter.innerHTML = '';
+
+    const allOption = document.createElement('option');
+    allOption.value = 'all';
+    allOption.textContent = 'All Agents';
+    agentFilter.appendChild(allOption);
+
+    for (const optionInfo of sortedOptions) {
+        const option = document.createElement('option');
+        option.value = optionInfo.id;
+        option.textContent = optionInfo.name;
+        agentFilter.appendChild(option);
+    }
+
+    agentFilter.value = optionsById.has(selectedAgent) ? selectedAgent : 'all';
+}
 
 /**
  * Load workspaces from API
@@ -33,7 +108,7 @@ async function loadWorkspaces() {
     showLoading();
     
     try {
-        const response = await fetch(`/api/browse/workspaces?page=${currentPage}&page_size=${pageSize}`);
+        const response = await fetch(`/api/browse/workspaces?${buildWorkspacesQuery()}`);
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
@@ -42,6 +117,8 @@ async function loadWorkspaces() {
         allWorkspaces = data.workspaces;
         totalCount = data.total_count;
         totalPages = data.total_pages;
+
+        populateAgentFilterOptions();
         
         filterWorkspaces();
         
@@ -55,6 +132,11 @@ async function loadWorkspaces() {
  * Refresh workspaces list
  */
 function refreshWorkspaces() {
+    currentPage = 1;
+    loadWorkspaces();
+}
+
+function applyAgentFilter() {
     currentPage = 1;
     loadWorkspaces();
 }

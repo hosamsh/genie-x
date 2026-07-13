@@ -93,7 +93,8 @@ const Sessions = {
             const info = AgentInfo.get(session.agent || 'default');
             
             // Highlight session name
-            let sessionDisplayName = Formatters.escapeHtml(session.session_name || session.session_id.substring(0, 12));
+            const sessionTitle = Formatters.sessionTitle(session.session_name, session.session_id.substring(0, 12));
+            let sessionDisplayName = Formatters.escapeHtml(sessionTitle);
             if (this.searchTerm) {
                 sessionDisplayName = Formatters.highlightText(sessionDisplayName, this.searchTerm);
             }
@@ -104,13 +105,14 @@ const Sessions = {
                      onclick="WorkspacePage.selectSession('${session.session_id}')">
                     <div class="flex items-center gap-1.5 mb-1">
                         <img src="${info.logo}" alt="${info.name}" class="w-3 h-3 object-contain flex-shrink-0" onerror="this.src='/static/img/agent-logo.svg'">
-                        <div class="font-medium text-sm text-white truncate font-mono" title="${session.session_name || session.session_id}">
+                        <div class="font-medium text-sm text-white truncate font-mono" title="${sessionTitle}">
                             ${sessionDisplayName}
                         </div>
+                        ${session.session_origin_label ? `<span class="px-1.5 py-0.5 rounded border border-border-dark text-[10px] uppercase tracking-wide text-terminal-cyan flex-shrink-0">${Formatters.escapeHtml(session.session_origin_label)}</span>` : ''}
                     </div>
                     <div class="flex items-center justify-between text-xs text-terminal-gray font-mono">
                         <span>${dateStr}</span>
-                        <span>${session.turn_count} turns</span>
+                        <span>${session.turn_count} turns${session.subagent_count ? ` • ${session.subagent_count} subagents` : ''}</span>
                     </div>
                 </div>
             `;

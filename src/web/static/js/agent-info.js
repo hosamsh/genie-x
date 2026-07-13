@@ -26,8 +26,11 @@ const AgentInfo = {
             // Build agents map from server data
             this.agents = {};
             for (const agent of data.agents) {
+                const versionedLogo = agent.icon
+                    ? `/api/agents/${agent.id}/icon?v=${encodeURIComponent(agent.icon)}`
+                    : `/api/agents/${agent.id}/icon`;
                 this.agents[agent.id] = {
-                    logo: `/api/agents/${agent.id}/icon`,
+                    logo: agent.icon_url || versionedLogo,
                     name: agent.display_name || agent.name,
                     color: agent.color || 'bg-surface-dark text-terminal-gray',
                 };

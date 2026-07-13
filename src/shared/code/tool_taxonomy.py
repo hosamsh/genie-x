@@ -32,7 +32,7 @@ _EXACT_MAPPINGS: dict[str, str] = {
     "ls": CATEGORY_GLOB,
     "notebookread": CATEGORY_READ,
     "notebookedit": CATEGORY_EDIT,
-    # Cursor
+    # Generic aliases
     "shell": CATEGORY_BASH,
     "strreplace": CATEGORY_EDIT,
     # VS Code / Copilot

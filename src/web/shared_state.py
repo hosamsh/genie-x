@@ -9,6 +9,8 @@ Run directory is configured via config.yaml under web.run_dir (default: data/web
 """
 
 import sqlite3
+import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Dict, Any
@@ -26,13 +28,36 @@ DEFAULT_RUN_DIR = Path("data/web")
 
 # Cache for run_dir to avoid repeated config loading
 _cached_run_dir: Optional[Path] = None
+_WORKSPACE_METADATA_CACHE_TTL_S = 300.0
+_workspace_metadata_cache: Dict[str, Any] = {
+    "run_dir": None,
+    "ts": 0.0,
+    "payload": None,
+}
+_workspace_metadata_cache_lock = threading.RLock()
 
 
 def clear_run_dir_cache():
     """Clear the cached run directory (useful for testing/reloading)."""
     global _cached_run_dir
-    _cached_run_dir = None
+    with _workspace_metadata_cache_lock:
+        _cached_run_dir = None
+        _workspace_metadata_cache["run_dir"] = None
+        _workspace_metadata_cache["ts"] = 0.0
+        _workspace_metadata_cache["payload"] = None
     logger.info("[WEB] Run directory cache cleared")
+
+
+def clear_workspace_metadata_caches() -> None:
+    """Clear cached workspace-discovery state used by the web layer."""
+    from src.shared.workspace_discovery import clear_find_workspace_cache, clear_workspace_folders_cache
+
+    with _workspace_metadata_cache_lock:
+        _workspace_metadata_cache["run_dir"] = None
+        _workspace_metadata_cache["ts"] = 0.0
+        _workspace_metadata_cache["payload"] = None
+        clear_find_workspace_cache()
+        clear_workspace_folders_cache()
 
 
 def get_run_dir() -> Path:
@@ -124,7 +149,7 @@ def resolve_workspace_folder(workspace_id: str) -> Optional[str]:
     """Resolve a workspace_id to its workspace_folder.
     
     This enables cross-agent consolidation by querying using workspace_folder
-    instead of workspace_id. When multiple agents (copilot, claude_code, cursor)
+    instead of workspace_id. When multiple supported agents share the same folder,
     work on the same folder, they may have different workspace_ids but the same
     workspace_folder.
     
@@ -134,6 +159,12 @@ def resolve_workspace_folder(workspace_id: str) -> Optional[str]:
     Returns:
         The normalized workspace_folder path, or None if not found
     """
+    from src.shared.workspace_discovery import find_workspace
+
+    ws = find_workspace(workspace_id)
+    if ws and ws.workspace_folder:
+        return ws.workspace_folder
+
     conn = connect_db()
     try:
         # First try to find workspace_folder from turns table
@@ -170,14 +201,21 @@ def get_workspace_status(workspace_id: str, agent: str) -> Optional[WorkspaceSta
     
     Args:
         workspace_id: The workspace ID
-        agent: The agent type (copilot, cursor, etc.)
+        agent: The agent type (for example copilot, claude_code, or copilot_cli)
         
     Returns:
         WorkspaceStatus if workspace has any data, None otherwise
     """
+    from src.shared.workspace_discovery import find_workspace
+
+    related_workspace_ids = [workspace_id]
+    ws = find_workspace(workspace_id)
+    if ws and ws._related_workspace_ids:
+        related_workspace_ids = ws._related_workspace_ids
+
     conn = connect_db()
     try:
-        status_dict = db_extract.query_workspace_status(conn, workspace_id, agent)
+        status_dict = db_extract.query_workspace_status(conn, related_workspace_ids, agent)
         if not status_dict:
             return None
         
@@ -240,6 +278,12 @@ def get_database_workspaces() -> Dict[str, Dict[str, Any]]:
 
 
 def get_all_workspace_metadata() -> Dict[str, Any]:
+    """Get all workspace metadata, coalescing concurrent cold-cache builds."""
+    with _workspace_metadata_cache_lock:
+        return _get_all_workspace_metadata_locked()
+
+
+def _get_all_workspace_metadata_locked() -> Dict[str, Any]:
     """Get all workspace metadata (unified model).
     
     This function returns WorkspaceInfo objects with enriched database fields.
@@ -250,14 +294,34 @@ def get_all_workspace_metadata() -> Dict[str, Any]:
         Dict mapping workspace_id -> WorkspaceInfo
     """
     from src.shared.models.workspace import WorkspaceInfo
-    from src.pipeline.extraction.workspace_discovery import list_all_workspaces
+    from src.shared.workspace_discovery import get_workspace_identity_key, list_all_workspaces
+
+    run_dir = str(get_run_dir())
+    now = time.monotonic()
+    cached_payload = _workspace_metadata_cache.get("payload")
+    if (
+        cached_payload is not None
+        and _workspace_metadata_cache.get("run_dir") == run_dir
+        and (now - float(_workspace_metadata_cache.get("ts") or 0.0)) < _WORKSPACE_METADATA_CACHE_TTL_S
+    ):
+        return cached_payload
+
+    start_time = time.perf_counter()
     
     # Get live workspaces from disk
+    checkpoint = time.perf_counter()
     live_workspaces = list_all_workspaces()
+    logger.info(
+        f"[PERF] get_all_workspace_metadata | list_all_workspaces: {(time.perf_counter()-checkpoint)*1000:.1f}ms"
+    )
     live_map = {ws.workspace_id: ws for ws in live_workspaces}
     
     # Get database workspaces (raw dicts)
+    checkpoint = time.perf_counter()
     db_workspaces_raw = get_database_workspaces()
+    logger.info(
+        f"[PERF] get_all_workspace_metadata | get_database_workspaces: {(time.perf_counter()-checkpoint)*1000:.1f}ms"
+    )
     
     # Convert raw dicts to WorkspaceInfo objects for merging
     db_workspaces = {}
@@ -277,7 +341,11 @@ def get_all_workspace_metadata() -> Dict[str, Any]:
         )
     
     # Get all statuses
+    checkpoint = time.perf_counter()
     all_statuses = get_all_workspace_statuses()
+    logger.info(
+        f"[PERF] get_all_workspace_metadata | get_all_workspace_statuses: {(time.perf_counter()-checkpoint)*1000:.1f}ms"
+    )
     
     # First pass: Merge by workspace_id (existing logic)
     by_id: Dict[str, Any] = {}
@@ -345,68 +413,62 @@ def get_all_workspace_metadata() -> Dict[str, Any]:
         by_id[ws_id] = merged
     
     # Second pass: Consolidate by workspace_folder for cross-agent unification
-    # This ensures copilot + claude_code + cursor on the same folder show as ONE workspace
-    by_folder: Dict[str, WorkspaceInfo] = {}
-    folder_to_canonical_id: Dict[str, str] = {}
-    
-    for ws_id, ws_info in by_id.items():
-        folder = ws_info.workspace_folder
-        if not folder:
-            # No folder - keep as separate entry (use ws_id as key)
-            by_folder[ws_id] = ws_info
+    # This ensures supported agents on the same folder show as one workspace
+    consolidated: Dict[str, WorkspaceInfo] = {}
+
+    sorted_items = sorted(
+        by_id.items(),
+        key=lambda item: (
+            0 if item[1].db_available else 1,
+            0 if item[1].source_available else 1,
+            len(item[0]),
+            item[0],
+        ),
+    )
+
+    for ws_id, ws_info in sorted_items:
+        merge_key = get_workspace_identity_key(ws_info)
+        if merge_key not in consolidated:
+            ws_info._related_workspace_ids = sorted(set(ws_info._related_workspace_ids or [ws_id]))
+            consolidated[merge_key] = ws_info
             continue
-        
-        # Normalize folder for comparison (URI-safe: don't use Path which mangles ://)
-        normalized_folder = folder.replace("\\", "/").lower()
-        
-        if normalized_folder not in folder_to_canonical_id:
-            # First workspace with this folder - use it as canonical
-            folder_to_canonical_id[normalized_folder] = ws_id
-            by_folder[ws_id] = ws_info
-        else:
-            # Merge with existing workspace that has the same folder
-            canonical_id = folder_to_canonical_id[normalized_folder]
-            existing = by_folder[canonical_id]
-            
-            # Merge agents
-            merged_agents = sorted(list(set(existing.agents) | set(ws_info.agents)))
-            
-            # Merge agent_status
-            merged_status = dict(existing.agent_status)
-            merged_status.update(ws_info.agent_status)
-            
-            # Aggregate counts
-            merged_session_count = existing.session_count + ws_info.session_count
-            merged_turn_count = existing.turn_count + ws_info.turn_count
-            
-            # Pick earliest first_timestamp and latest last_timestamp
-            first_ts = existing.first_timestamp
-            if ws_info.first_timestamp:
-                if not first_ts or ws_info.first_timestamp < first_ts:
-                    first_ts = ws_info.first_timestamp
-            
-            last_ts = existing.last_timestamp
-            if ws_info.last_timestamp:
-                if not last_ts or ws_info.last_timestamp > last_ts:
-                    last_ts = ws_info.last_timestamp
-            
-            # Update the canonical entry
-            by_folder[canonical_id] = WorkspaceInfo(
-                workspace_id=canonical_id,  # Keep the canonical ID
-                workspace_name=existing.workspace_name or ws_info.workspace_name,
-                workspace_folder=existing.workspace_folder or ws_info.workspace_folder,
-                agents=merged_agents,
-                session_count=merged_session_count,
-                turn_count=merged_turn_count,
-                is_extracted=existing.is_extracted or ws_info.is_extracted,
-                first_timestamp=first_ts,
-                last_timestamp=last_ts,
-                source_available=existing.source_available or ws_info.source_available,
-                db_available=existing.db_available or ws_info.db_available,
-                agent_status=merged_status,
-            )
-    
-    return by_folder
+
+        existing = consolidated[merge_key]
+        merged_agents = sorted(list(set(existing.agents) | set(ws_info.agents)))
+        merged_status = dict(existing.agent_status)
+        merged_status.update(ws_info.agent_status)
+        first_ts = existing.first_timestamp
+        if ws_info.first_timestamp and (not first_ts or ws_info.first_timestamp < first_ts):
+            first_ts = ws_info.first_timestamp
+        last_ts = existing.last_timestamp
+        if ws_info.last_timestamp and (not last_ts or ws_info.last_timestamp > last_ts):
+            last_ts = ws_info.last_timestamp
+
+        merged = WorkspaceInfo(
+            workspace_id=existing.workspace_id,
+            workspace_name=existing.workspace_name or ws_info.workspace_name,
+            workspace_folder=existing.workspace_folder or ws_info.workspace_folder,
+            agents=merged_agents,
+            session_count=existing.session_count + ws_info.session_count,
+            turn_count=existing.turn_count + ws_info.turn_count,
+            is_extracted=existing.is_extracted or ws_info.is_extracted,
+            first_timestamp=first_ts,
+            last_timestamp=last_ts,
+            source_available=existing.source_available or ws_info.source_available,
+            db_available=existing.db_available or ws_info.db_available,
+            agent_status=merged_status,
+        )
+        merged._related_workspace_ids = sorted(set(existing._related_workspace_ids or [existing.workspace_id]) | set(ws_info._related_workspace_ids or [ws_id]))
+        consolidated[merge_key] = merged
+
+    final_map = {workspace.workspace_id: workspace for workspace in consolidated.values()}
+    _workspace_metadata_cache["run_dir"] = run_dir
+    _workspace_metadata_cache["ts"] = now
+    _workspace_metadata_cache["payload"] = final_map
+    logger.info(
+        f"[PERF] get_all_workspace_metadata | TOTAL: {(time.perf_counter()-start_time)*1000:.1f}ms"
+    )
+    return final_map
 
 
 def get_sessions_for_workspace(workspace_id: str, agent: str) -> List[Dict[str, Any]]:
@@ -428,7 +490,13 @@ def get_sessions_for_workspace(workspace_id: str, agent: str) -> List[Dict[str, 
         conn.close()
 
 
-def get_sessions_for_workspace_by_folder(workspace_id: str, agent: str) -> List[Dict[str, Any]]:
+def get_sessions_for_workspace_by_folder(
+    workspace_id: str,
+    agent: str,
+    *,
+    related_workspace_ids: Optional[List[str]] = None,
+    workspace_folder: Optional[str] = None,
+) -> List[Dict[str, Any]]:
     """Get all sessions for a workspace, consolidated by workspace_folder.
     
     This resolves workspace_id to workspace_folder and queries all sessions
@@ -442,14 +510,50 @@ def get_sessions_for_workspace_by_folder(workspace_id: str, agent: str) -> List[
     Returns:
         List of session dicts from all agents sharing the same folder
     """
-    workspace_folder = resolve_workspace_folder(workspace_id)
+    ws = None
+    if related_workspace_ids is None or workspace_folder is None:
+        from src.shared.workspace_discovery import find_workspace
+
+        ws = find_workspace(workspace_id)
+
+    if related_workspace_ids is None:
+        related_workspace_ids = ws._related_workspace_ids if ws and ws._related_workspace_ids else [workspace_id]
+
+    if related_workspace_ids:
+        conn = connect_db()
+        try:
+            return db_extract.query_workspace_sessions_for_ids(conn, related_workspace_ids, agent)
+        finally:
+            conn.close()
+
+    workspace_folder = workspace_folder or (ws.workspace_folder if ws and ws.workspace_folder else resolve_workspace_folder(workspace_id))
     if not workspace_folder:
-        # Fallback to workspace_id-based query if folder not found
-        return get_sessions_for_workspace(workspace_id, agent)
+        # Fallback to workspace-id based query if folder not found
+        conn = connect_db()
+        try:
+            return db_extract.query_workspace_sessions_for_ids(conn, related_workspace_ids, agent)
+        finally:
+            conn.close()
     
     conn = connect_db()
     try:
-        return db_extract.query_workspace_sessions_by_folder(conn, workspace_folder, agent)
+        return db_extract.query_workspace_sessions_by_folder(conn, workspace_folder, related_workspace_ids, agent)
+    finally:
+        conn.close()
+
+
+def get_session_source_metadata(workspace_id: str, session_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+    if not session_ids:
+        return {}
+
+    from src.shared.workspace_discovery import find_workspace
+
+    ws = find_workspace(workspace_id)
+    related_workspace_ids = ws._related_workspace_ids if ws and ws._related_workspace_ids else [workspace_id]
+
+    conn = connect_db()
+    try:
+        return db_extract.query_session_source_metadata(conn, related_workspace_ids, session_ids)
     finally:
         conn.close()
 

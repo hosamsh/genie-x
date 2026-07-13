@@ -39,6 +39,10 @@ class WorkspaceInfo(DataclassIO):
     
     # Optional: Per-agent status (for multi-agent workspaces)
     agent_status: Dict[str, "AgentStatus"] = field(default_factory=dict)
+
+    # Internal: mapping of agent -> agent-specific workspace_id used during extraction
+    _agent_workspace_ids: Dict[str, List[str]] = field(default_factory=dict, repr=False)
+    _related_workspace_ids: List[str] = field(default_factory=list, repr=False)
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "WorkspaceInfo":
@@ -115,6 +119,7 @@ class ExtractedWorkspace:
     agent_name: str
     workspace_id: str = ""
     code_metrics: List[CodeMetric] = field(default_factory=list)
+    source_artifacts: Dict[str, Any] = field(default_factory=dict)
     
     @property
     def turn_count(self) -> int:
@@ -135,6 +140,8 @@ class WorkspaceExtractionResult:
     combined_count: int = 0
     total_code_loc: int = 0
     total_doc_loc: int = 0
+    embedding_min_turn_id: Optional[int] = None
+    embedding_max_turn_id: Optional[int] = None
     reason: Optional[str] = None  # For skipped
     error: Optional[str] = None  # For failed
 
@@ -168,4 +175,3 @@ class WorkspaceExtractionResult:
             }.items()
             if v is not None
         }
-

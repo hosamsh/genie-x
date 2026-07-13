@@ -65,3 +65,15 @@ def test_unknown_extra_fields_are_preserved() -> None:
 
     assert enriched.extra["custom_field"] == "keep"
     assert enriched.extra["source_output_tokens"] == 9
+
+
+def test_parent_session_relationship_fields_are_preserved() -> None:
+    turn = _make_turn(
+        parent_session_id="parent-session-1",
+        relationship_type="subagent",
+    )
+
+    enriched = enrich_turn(turn)
+
+    assert enriched.parent_session_id == "parent-session-1"
+    assert enriched.relationship_type == "subagent"

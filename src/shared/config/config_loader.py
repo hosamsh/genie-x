@@ -195,7 +195,7 @@ def get_config(config_path: Optional[str] = None) -> Config:
         config_path = "config/config.yaml"
     
     # Use default path if a non-path value is passed (safety check)
-    if config_path in ("copilot", "cursor"):
+    if config_path in ("copilot", "claude_code", "copilot_cli"):
         # Safety: if someone accidentally passes agent name, use default path
         config_path = "config/config.yaml"
     

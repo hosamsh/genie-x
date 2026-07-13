@@ -35,8 +35,10 @@ def main():
     
     # Import here to allow for cleaner error messages if deps are missing
     try:
-        import uvicorn
-    except ImportError:
+        from src.web.server_runner import run_web_server
+    except ImportError as error:
+        if error.name != "uvicorn":
+            raise
         print("Error: uvicorn not installed. Run: uv sync")
         return 1
     
@@ -58,13 +60,8 @@ def main():
         print(f"🔬 Copilot Chat Extractor starting at http://{args.host}:{args.port}")
         print()
     
-    uvicorn.run(
-        "src.web.server:app",
-        host=args.host,
-        port=args.port,
-        reload=False,
-    )
+    return run_web_server("src.web.server:app", host=args.host, port=args.port)
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
