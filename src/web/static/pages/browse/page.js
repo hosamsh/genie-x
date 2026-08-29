@@ -32,11 +32,17 @@ function getAgentFilterValue() {
     return agentFilter?.value || 'all';
 }
 
+function getSortValue() {
+    const sortFilter = document.getElementById('sort-filter');
+    return sortFilter?.value || 'name';
+}
+
 function buildWorkspacesQuery() {
     const params = new URLSearchParams({
         page: String(currentPage),
         page_size: String(pageSize),
         include_live: 'true',
+        sort: getSortValue(),
     });
 
     const agentFilter = getAgentFilterValue();
@@ -137,6 +143,11 @@ function refreshWorkspaces() {
 }
 
 function applyAgentFilter() {
+    currentPage = 1;
+    loadWorkspaces();
+}
+
+function applySort() {
     currentPage = 1;
     loadWorkspaces();
 }
@@ -265,7 +276,7 @@ function renderWorkspaceCard(ws) {
         const date = new Date(firstExtracted.extracted_at);
         extractionInfo = `
             <div class="text-xs text-terminal-gray/70 mt-2 font-mono">
-                EXTRACTED: ${date.toLocaleDateString()} ${date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                LATEST: ${date.toLocaleDateString()} ${date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
             </div>
         `;
     }

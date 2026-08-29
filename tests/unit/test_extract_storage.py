@@ -162,6 +162,74 @@ def test_parsed_storage_round_trip(tmp_path: Path) -> None:
     assert assistant_event.attachments[0].title == "app.py"
 
 
+def test_parsed_storage_merges_duplicate_session_fragments(tmp_path: Path) -> None:
+    db_path = tmp_path / "parsed.db"
+    conn = init_shared_db(db_path, verbose=False)
+    parsed_workspace = _sample_parsed_workspace(tmp_path)
+    first = parsed_workspace.sessions[0]
+    first.title = "First fragment"
+    first.source_path = "c:/repo/demo/first.jsonl"
+    first.started_at_ms = 100
+    first.ended_at_ms = 200
+    first.metadata = {"fragment": "first", "shared": "old"}
+    first.issues = [ParserIssue(level="warning", code="first", message="first issue")]
+    first.links = []
+
+    second = ParsedSession(
+        session_id=first.session_id,
+        agent_name=first.agent_name,
+        workspace_id=first.workspace_id,
+        workspace_name=first.workspace_name,
+        workspace_folder=first.workspace_folder,
+        title="Later fragment",
+        source_path="c:/repo/demo/second.jsonl",
+        started_at_ms=50,
+        ended_at_ms=400,
+        parent_session_id="parent-1",
+        relationship_type="fork",
+        metadata={"shared": "new", "fragment": "second"},
+        issues=[ParserIssue(level="warning", code="second", message="second issue")],
+        links=[
+            SessionLinkRecord(
+                target_session_id="child-1",
+                relationship_type="subagent",
+                trigger_event_index=1,
+            )
+        ],
+        events=[
+            SessionEventRecord(index=0, event_type="user", text="third"),
+            SessionEventRecord(index=1, event_type="assistant", text="fourth"),
+        ],
+    )
+    parsed_workspace.sessions.append(second)
+
+    counts = upsert_parsed_workspace(conn, parsed_workspace)
+    reloaded = get_parsed_workspace(conn, "ws-raw-1", "claude_code")
+    conn.close()
+
+    assert counts["sessions"] == 1
+    assert counts["events"] == 4
+    assert counts["session_links"] == 1
+    assert reloaded is not None
+
+    session = reloaded.sessions[0]
+    assert session.title == "Later fragment"
+    assert session.source_path == "c:/repo/demo/second.jsonl"
+    assert session.started_at_ms == 50
+    assert session.ended_at_ms == 400
+    assert session.parent_session_id == "parent-1"
+    assert session.relationship_type == "fork"
+    assert session.metadata == {"fragment": "second", "shared": "new"}
+    assert [issue.code for issue in session.issues] == ["first", "second"]
+    assert [(event.index, event.text) for event in session.events] == [
+        (0, "/review"),
+        (1, "Done"),
+        (2, "third"),
+        (3, "fourth"),
+    ]
+    assert session.links[0].trigger_event_index == 3
+
+
 def test_parsed_storage_replaces_existing_workspace_rows(tmp_path: Path) -> None:
     db_path = tmp_path / "parsed.db"
     conn = init_shared_db(db_path, verbose=False)

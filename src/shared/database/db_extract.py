@@ -386,28 +386,54 @@ def upsert_turns(conn: sqlite3.Connection, turns: List[EnrichedTurn]) -> int:
             cumulative_tokens += turn.total_tokens
     
     metrics_to_insert: List[CodeMetric] = []
+    # Aggregate edits per (request_id, file_path). The code_metrics table has a
+    # UNIQUE(request_id, file_path) constraint, so multiple edits to one file in
+    # a request must be combined (summing deltas) rather than overwriting each
+    # other. This keeps code_metrics consistent with the per-turn rollup, which
+    # sums every edit's delta.
+    metrics_by_key: Dict[tuple, CodeMetric] = {}
     for turn in turns:
         upsert_turn(conn, turn)
-        
+
         # Collect metrics from code edits
         if turn.code_edits:
             for edit in turn.code_edits:
                 extra = edit.extra or {}
-                metric_record = CodeMetric(
-                    request_id=turn.request_id,
-                    session_id=turn.session_id,
-                    file_path=edit.file_path,
-                    workspace_id=turn.workspace_id,
-                    agent_used=turn.agent_used,
-                    model_id=turn.model_id,
-                    before_metrics=extra.get("before_metrics"),
-                    after_metrics=extra.get("after_metrics"),
-                    delta_metrics=extra.get("delta_metrics"),
-                    code_before=edit.code_before,
-                    code_after=edit.code_after,
-                )
-                metrics_to_insert.append(metric_record)
-    
+                delta = extra.get("delta_metrics") or {}
+                key = (turn.request_id, edit.file_path)
+                existing = metrics_by_key.get(key)
+                if existing is None:
+                    metric_record = CodeMetric(
+                        request_id=turn.request_id,
+                        session_id=turn.session_id,
+                        file_path=edit.file_path,
+                        workspace_id=turn.workspace_id,
+                        agent_used=turn.agent_used,
+                        model_id=turn.model_id,
+                        before_metrics=extra.get("before_metrics"),
+                        after_metrics=extra.get("after_metrics"),
+                        delta_metrics=dict(delta),
+                        code_before=edit.code_before,
+                        code_after=edit.code_after,
+                    )
+                    metrics_by_key[key] = metric_record
+                    metrics_to_insert.append(metric_record)
+                else:
+                    # Same file edited again within the request: sum the deltas
+                    # and carry the latest after-state so the single stored row
+                    # reflects the file's full change for this request.
+                    merged = dict(existing.delta_metrics or {})
+                    for field_name in ("nloc", "lines_added", "lines_removed", "token_count"):
+                        merged[field_name] = (merged.get(field_name) or 0) + (delta.get(field_name) or 0)
+                    cur_complexity = merged.get("cyclomatic_complexity") or 0
+                    new_complexity = delta.get("cyclomatic_complexity") or 0
+                    if abs(new_complexity) > abs(cur_complexity):
+                        merged["cyclomatic_complexity"] = new_complexity
+                    existing.delta_metrics = merged
+                    if extra.get("after_metrics"):
+                        existing.after_metrics = extra.get("after_metrics")
+                    existing.code_after = edit.code_after
+
     conn.commit()
     
     # Insert collected metrics (best-effort - don't fail turn insertion if metrics fail)

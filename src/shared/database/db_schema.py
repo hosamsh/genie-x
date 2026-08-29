@@ -920,6 +920,14 @@ def json_dumps_for_db(value: Any) -> str:
     """
     if value is None:
         return ""
-    return json.dumps(value, ensure_ascii=False)
+    result = json.dumps(value, ensure_ascii=False)
+    # Strip lone Unicode surrogates (U+D800-U+DFFF) that survive from malformed
+    # source content. They cannot be encoded to UTF-8 and would crash the SQLite
+    # write for any JSON column (raw_json, extra_json, metadata_json, ...).
+    try:
+        result.encode("utf-8")
+    except UnicodeEncodeError:
+        result = result.encode("utf-8", "ignore").decode("utf-8", "ignore")
+    return result
 
 

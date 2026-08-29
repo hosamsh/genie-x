@@ -278,14 +278,56 @@ def enrich_turn(base: Turn) -> EnrichedTurn:
     return turn
 
 
+def _chain_edit_before_content(base_turns: List[Union[Turn, EnrichedTurn]]) -> None:
+    """Reconstruct missing before-content for code edits by chaining per file.
+
+    Some agents (notably VS Code Copilot) don't reliably persist the 'before'
+    snapshot for edits after a file's first edit, so every edit looks like a
+    full-file addition: no deletions, inflated line counts, and duplicate-looking
+    rows. We walk edits in chronological order and, when a snapshot-style edit
+    (one that carries after-content) has no before-content, seed it from the
+    previous edit's after-content for the same file. Diffs then become
+    incremental and deletions are captured; a file's genuine first edit keeps an
+    empty before. Diff-only edits (e.g. applypatch) already carry correct deltas
+    and are left untouched.
+    """
+    ordered = sorted(
+        (t for t in base_turns if isinstance(t, Turn) and not isinstance(t, EnrichedTurn)),
+        key=lambda t: (t.timestamp_ms or 0, t.session_id or "", t.turn or 0),
+    )
+    last_after_by_file: Dict[tuple[str, str, str, str], str] = {}
+    for turn in ordered:
+        for edit in turn.code_edits:
+            if not isinstance(edit, CodeEdit):
+                continue
+            # Only snapshot-style edits (that carry after-content) participate.
+            if edit.code_after is None:
+                continue
+            file_key = (edit.file_path or "").replace("\\", "/").lower()
+            if not file_key:
+                continue
+            cache_key = (turn.workspace_id or "", turn.agent_used or "", turn.session_id or "", file_key)
+            if not edit.code_before and cache_key in last_after_by_file:
+                edit.code_before = last_after_by_file[cache_key]
+                # Force recompute of any precomputed delta from the new before.
+                if isinstance(edit.extra, dict):
+                    edit.extra.pop("delta_metrics", None)
+            last_after_by_file[cache_key] = edit.code_after
+
+
 def enrich_turns(base_turns: List[Union[Turn, EnrichedTurn]], calculate_metrics: bool = True) -> List[EnrichedTurn]:
     """Enrich turns with tokens, languages, metrics; calculate response times."""
     if not base_turns:
         return []
-    
+
     perf_start = time.perf_counter()
     logger.progress(f"  Enriching {len(base_turns)} turns...")
-    
+
+    # Reconstruct missing before-content by chaining per file so incremental
+    # edits produce correct added/removed counts (fixes agents that only persist
+    # after-content, e.g. VS Code Copilot).
+    _chain_edit_before_content(base_turns)
+
     checkpoint = time.perf_counter()
     enriched: List[EnrichedTurn] = []
     for base in base_turns:

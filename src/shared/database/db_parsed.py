@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import sqlite3
 from typing import Any, Optional, cast
 
@@ -24,6 +25,18 @@ from src.shared.database.db_schema import ensure_parsed_tables, json_dumps_for_d
 from src.shared.logging.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+@dataclass
+class _SessionRowState:
+    title: str
+    source_path: str
+    started_at_ms: Optional[int]
+    ended_at_ms: Optional[int]
+    parent_session_id: str
+    relationship_type: str
+    metadata: dict[str, Any]
+    issues: list[ParserIssue]
 
 
 def delete_parsed_workspace(
@@ -82,32 +95,67 @@ def upsert_parsed_workspace(conn: sqlite3.Connection, parsed_workspace: ParsedWo
             "session_links": 0,
         }
 
-        for session in parsed_workspace.sessions:
-            cursor.execute(
-                """
-                INSERT INTO parsed_sessions (
-                    workspace_row_id, session_id, title, source_path,
-                    started_at_ms, ended_at_ms, parent_session_id, relationship_type,
-                    metadata_json, issues_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    workspace_row_id,
-                    session.session_id,
-                    sanitize_unicode(session.title),
-                    sanitize_unicode(session.source_path),
-                    session.started_at_ms,
-                    session.ended_at_ms,
-                    session.parent_session_id or None,
-                    session.relationship_type or None,
-                    json_dumps_for_db(session.metadata),
-                    json_dumps_for_db([issue.to_dict() for issue in session.issues]),
-                ),
-            )
-            session_row_id = cast(int, cursor.lastrowid)
-            counts["sessions"] += 1
+        # Track inserted session rows so duplicate session_ids within the same
+        # workspace (e.g. a Codex session resumed across multiple rollout files)
+        # are merged into a single session row instead of violating the
+        # UNIQUE(workspace_row_id, session_id) constraint. Event and link indices
+        # are assigned from a per-row running counter so they never collide on
+        # their own UNIQUE(session_row_id, index) constraints.
+        session_row_by_id: dict[str, int] = {}
+        event_cursor_by_row: dict[int, int] = {}
+        link_cursor_by_row: dict[int, int] = {}
+        session_state_by_row: dict[int, _SessionRowState] = {}
 
-            for link_index, link in enumerate(session.links):
+        for session in parsed_workspace.sessions:
+            session_row_id = session_row_by_id.get(session.session_id)
+            if session_row_id is None:
+                cursor.execute(
+                    """
+                    INSERT INTO parsed_sessions (
+                        workspace_row_id, session_id, title, source_path,
+                        started_at_ms, ended_at_ms, parent_session_id, relationship_type,
+                        metadata_json, issues_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        workspace_row_id,
+                        session.session_id,
+                        sanitize_unicode(session.title),
+                        sanitize_unicode(session.source_path),
+                        session.started_at_ms,
+                        session.ended_at_ms,
+                        session.parent_session_id or None,
+                        session.relationship_type or None,
+                        json_dumps_for_db(session.metadata),
+                        json_dumps_for_db([issue.to_dict() for issue in session.issues]),
+                    ),
+                )
+                session_row_id = cast(int, cursor.lastrowid)
+                session_row_by_id[session.session_id] = session_row_id
+                event_cursor_by_row[session_row_id] = 0
+                link_cursor_by_row[session_row_id] = 0
+                session_state_by_row[session_row_id] = _session_row_state_from_session(session)
+                counts["sessions"] += 1
+            else:
+                state = session_state_by_row[session_row_id]
+                _merge_session_row_state(state, session)
+                _update_session_row(cursor, session_row_id, state)
+
+            event_offset = event_cursor_by_row[session_row_id]
+            event_index_by_source = {
+                event.index: event_offset + event_ordinal
+                for event_ordinal, event in enumerate(session.events)
+            }
+
+            for link in session.links:
+                link_index = link_cursor_by_row[session_row_id]
+                link_cursor_by_row[session_row_id] = link_index + 1
+                trigger_event_index = link.trigger_event_index
+                if trigger_event_index is not None:
+                    trigger_event_index = event_index_by_source.get(
+                        trigger_event_index,
+                        event_offset + trigger_event_index,
+                    )
                 cursor.execute(
                     """
                     INSERT INTO parsed_session_links (
@@ -120,7 +168,7 @@ def upsert_parsed_workspace(conn: sqlite3.Connection, parsed_workspace: ParsedWo
                         link_index,
                         link.target_session_id,
                         link.relationship_type,
-                        link.trigger_event_index,
+                        trigger_event_index,
                         link.trigger_tool_call_id or None,
                         json_dumps_for_db(link.extra),
                     ),
@@ -128,7 +176,9 @@ def upsert_parsed_workspace(conn: sqlite3.Connection, parsed_workspace: ParsedWo
                 counts["session_links"] += 1
 
             for event in session.events:
-                event_row_id = _insert_event(cursor, session_row_id, event)
+                event_index = event_cursor_by_row[session_row_id]
+                event_cursor_by_row[session_row_id] = event_index + 1
+                event_row_id = _insert_event(cursor, session_row_id, event, event_index=event_index)
                 counts["events"] += 1
 
                 for block_index, block in enumerate(event.content_blocks):
@@ -309,6 +359,63 @@ def get_parsed_workspace(
     )
 
 
+def _session_row_state_from_session(session: ParsedSession) -> _SessionRowState:
+    return _SessionRowState(
+        title=session.title,
+        source_path=session.source_path,
+        started_at_ms=session.started_at_ms,
+        ended_at_ms=session.ended_at_ms,
+        parent_session_id=session.parent_session_id,
+        relationship_type=session.relationship_type,
+        metadata=dict(session.metadata),
+        issues=list(session.issues),
+    )
+
+
+def _merge_session_row_state(state: _SessionRowState, session: ParsedSession) -> None:
+    if session.title:
+        state.title = session.title
+    if session.source_path:
+        state.source_path = session.source_path
+    if session.started_at_ms is not None and (
+        state.started_at_ms is None or session.started_at_ms < state.started_at_ms
+    ):
+        state.started_at_ms = session.started_at_ms
+    if session.ended_at_ms is not None and (
+        state.ended_at_ms is None or session.ended_at_ms > state.ended_at_ms
+    ):
+        state.ended_at_ms = session.ended_at_ms
+    if session.parent_session_id:
+        state.parent_session_id = session.parent_session_id
+    if session.relationship_type:
+        state.relationship_type = session.relationship_type
+    state.metadata.update(session.metadata)
+    state.issues.extend(session.issues)
+
+
+def _update_session_row(cursor: sqlite3.Cursor, session_row_id: int, state: _SessionRowState) -> None:
+    cursor.execute(
+        """
+        UPDATE parsed_sessions
+           SET title = ?, source_path = ?, started_at_ms = ?, ended_at_ms = ?,
+               parent_session_id = ?, relationship_type = ?, metadata_json = ?,
+               issues_json = ?, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?
+        """,
+        (
+            sanitize_unicode(state.title),
+            sanitize_unicode(state.source_path),
+            state.started_at_ms,
+            state.ended_at_ms,
+            state.parent_session_id or None,
+            state.relationship_type or None,
+            json_dumps_for_db(state.metadata),
+            json_dumps_for_db([issue.to_dict() for issue in state.issues]),
+            session_row_id,
+        ),
+    )
+
+
 def _delete_parsed_workspace_rows(
     conn: sqlite3.Connection,
     workspace_id: str,
@@ -374,7 +481,7 @@ def _delete_parsed_workspace_rows(
     return deleted
 
 
-def _insert_event(cursor: sqlite3.Cursor, session_row_id: int, event: SessionEventRecord) -> int:
+def _insert_event(cursor: sqlite3.Cursor, session_row_id: int, event: SessionEventRecord, event_index: int | None = None) -> int:
     cursor.execute(
         """
         INSERT INTO parsed_events (
@@ -385,7 +492,7 @@ def _insert_event(cursor: sqlite3.Cursor, session_row_id: int, event: SessionEve
         """,
         (
             session_row_id,
-            event.index,
+            event.index if event_index is None else event_index,
             event.event_type,
             event.role or None,
             event.timestamp_ms,

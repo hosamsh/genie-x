@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException
 
 from src.web.shared_state import (
     get_all_workspace_metadata,
+    get_session_source_metadata,
     get_sessions_for_workspace_by_folder,
     get_turns_for_session,
 )
@@ -58,14 +59,23 @@ async def get_workspace_sessions(workspace_id: str):
         workspace_folder=metadata.workspace_folder,
     )
     perf.checkpoint("get_sessions_for_workspace_by_folder")
+
+    source_metadata = get_session_source_metadata(
+        workspace_id,
+        [session["session_id"] for session in all_sessions if session.get("session_id")],
+    )
+    perf.checkpoint("get_session_source_metadata")
     
     # Add agent info to each session if not already present
-    for s in all_sessions:
-        if "agent" not in s and "agents" in s:
+    for session in all_sessions:
+        session_metadata = source_metadata.get(session.get("session_id"))
+        if session_metadata:
+            session.update(session_metadata)
+        if "agent" not in session and "agents" in session:
             # Use first agent if multiple
-            s["agent"] = s["agents"][0] if s["agents"] else "unknown"
-        if s.get("parent_session_id") == s.get("session_id"):
-            s["parent_session_id"] = None
+            session["agent"] = session["agents"][0] if session["agents"] else "unknown"
+        if session.get("parent_session_id") == session.get("session_id"):
+            session["parent_session_id"] = None
 
     children_by_parent: dict[str, list[dict]] = {}
     root_sessions: list[dict] = []

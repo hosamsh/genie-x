@@ -9,7 +9,7 @@
 
 ## 🔬 What is This?
 
-Every AI coding session you run — GitHub Copilot, Claude Code, and Copilot CLI — writes structured conversation data to local storage. That data is scattered across different formats and directories, and none of these tools let you search, compare, or analyze it.
+Every AI coding session you run — GitHub Copilot, Claude Code, Codex, and Copilot CLI — writes structured conversation data to local storage. That data is scattered across different formats and directories, and none of these tools let you search, compare, or analyze it.
 
 **Genie‑X** extracts those conversations into a single indexed database. You get full-text and semantic search across every session you've ever had, usage analytics per workspace, and a local web UI to browse it all. No cloud dependency, no API keys required for core functionality. It reads what's already on your machine.
 
@@ -31,7 +31,7 @@ Every AI coding session you run — GitHub Copilot, Claude Code, and Copilot CLI
 
 ### ✨ Features
 
-- **Multi-Agent Extraction**: GitHub Copilot, Claude Code, and GitHub Copilot CLI — each with an extract2 parser that handles the agent's native storage format
+- **Multi-Agent Extraction**: GitHub Copilot, Claude Code, Codex, and GitHub Copilot CLI — each with a dedicated parser for the agent's native storage format
 - **Web Dashboard**: Local web UI for browsing workspaces, viewing per-session analytics, and exploring full conversation threads
 - **Semantic + Keyword Search**: Sentence Transformers embeddings combined with SQLite FTS5 for both meaning-based and exact-match search across all extracted conversations
 - **CLI Interface**: Full command-line access for automation: list workspaces, extract, search, refresh
@@ -44,7 +44,7 @@ Every AI coding session you run — GitHub Copilot, Claude Code, and Copilot CLI
 
 - Python 3.11 or higher
 - [uv](https://github.com/astral-sh/uv) - Fast Python package manager
-- One or more supported AI coding agents installed (GitHub Copilot / Claude Code / GitHub Copilot CLI)
+- One or more supported AI coding agents installed (GitHub Copilot / Claude Code / Codex / GitHub Copilot CLI)
 
 ### Installation
 
@@ -65,7 +65,7 @@ Every AI coding session you run — GitHub Copilot, Claude Code, and Copilot CLI
 **Important:** Gennie-X does **not** create workspaces. Instead, it *discovers* existing workspaces from your AI coding agents. The tool reads the local storage where these agents save their conversation history.
 
 To have workspaces available:
-1. Use one of the supported agents (GitHub Copilot in VS Code, Claude Code, or Copilot CLI)
+1. Use one of the supported agents (GitHub Copilot in VS Code, Claude Code, Codex, or Copilot CLI)
 2. Open a project/folder in the agent
 3. Start at least one chat conversation with the AI assistant
 4. The agent will save this data to its local storage (auto-detected by Gennie-X)
@@ -75,6 +75,10 @@ To have workspaces available:
 #### 0) Create the Config File (Required)
 
 Create the config file by copying or renaming the example config. The defaults work for most setups:
+
+```powershell
+Copy-Item config/config.example.yaml config/config.yaml
+```
 
 ```bash
 cp config/config.example.yaml config/config.yaml
@@ -92,7 +96,7 @@ uv run python run_web.py
 
 The web interface lets you browse workspaces, extract chat sessions, view analytics, and explore conversations interactively without needing to use the CLI.
 
-If the web UI shows no workspaces, it usually means the app is pointing at the wrong storage location or there is no local agent data yet. Check the storage paths in `config/config.yaml` (section `extract.<agent>.workspace_storage`). If you have not used the agent locally, open any workspace in the agent and start a chat once so it writes local storage, then refresh.
+If the web UI shows no workspaces, it usually means the app is pointing at the wrong storage location or there is no local agent data yet. Check the storage paths in `config/config.yaml`: `extract.copilot.workspace_storage`, `extract.claude_code.claude_dir`, `extract.codex.codex_home`, or `extract.copilot_cli.session_state_dir`. If you have not used the agent locally, open any workspace in the agent and start a chat once so it writes local storage, then refresh.
 
 #### 2) Using the CLI
 
@@ -107,7 +111,7 @@ uv run python run_cli.py --list
 uv run python run_cli.py --extract <workspace-id> --run-dir data/<dir-name>
 
 # Extract all workspaces for a specific agent
-uv run python run_cli.py --extract --all --agent <copilot|claude_code|copilot_cli> --run-dir data/<dir-name>
+uv run python run_cli.py --extract --all --agent <copilot|claude_code|codex|copilot_cli> --run-dir data/<dir-name>
 
 # Refresh an existing workspace (incremental sync; only new/changed turns)
 uv run python run_cli.py --extract <workspace-id> --run-dir data/<dir-name>
@@ -116,14 +120,27 @@ uv run python run_cli.py --extract <workspace-id> --run-dir data/<dir-name>
 uv run python run_cli.py --extract <workspace-id> --run-dir data/<dir-name> --force-refresh
 
 # Full reset (erase DB, then re-ingest)
+# PowerShell
+Remove-Item data/<dir-name> -Recurse -Force
+
+# bash
 rm -rf data/<dir-name>
+
 uv run python run_cli.py --extract <workspace-id> --run-dir data/<dir-name>
 
 # Search through extracted conversations
 uv run python run_cli.py --search "your search query" --run-dir data/<dir-name>
 ```
 
-If `--list` shows 0 workspaces, it usually means the app is pointing at the wrong storage location or there is no local agent data yet. Check the storage paths in `config/config.yaml` (see section `extract.<agent>.workspace_storage` in the config). If you have not used the agent locally, open any workspace in the agent and start a chat once so it writes local storage, then re-run `--list`.
+If `--list` shows 0 workspaces, it usually means the app is pointing at the wrong storage location or there is no local agent data yet. Check the storage paths in `config/config.yaml`: `extract.copilot.workspace_storage`, `extract.claude_code.claude_dir`, `extract.codex.codex_home`, or `extract.copilot_cli.session_state_dir`. If you have not used the agent locally, open any workspace in the agent and start a chat once so it writes local storage, then re-run `--list`.
+
+Semantic search needs indexed embeddings. If search reports missing indexes, run:
+
+```bash
+uv run python run_cli.py --reindex --run-dir data/<dir-name>
+```
+
+You can also enable automatic embedding generation during extraction by setting `search.auto_embed_on_extraction: true` in `config/config.yaml`.
 
 ## 📝 Configuration
 

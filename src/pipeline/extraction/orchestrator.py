@@ -12,7 +12,11 @@ from src.shared.database.db_schema import init_shared_db
 from src.shared.io.run_dir import get_db_path
 from src.shared.logging.logger import get_logger
 from src.shared.models.workspace import WorkspaceExtractionResult
-from src.shared.workspace_discovery import find_workspace
+from src.shared.workspace_discovery import (
+    find_workspace,
+    prime_workspace_scan_cache,
+    clear_workspace_scan_cache,
+)
 from .embedding_postprocess import run_embedding_postprocess
 from .extractor import extract_workspace as _extract_workspace_data
 from .storage import store_extraction_result
@@ -184,7 +188,13 @@ async def extract_workspaces(
     pipeline_start = datetime.now()
     db_path = get_db_path(run_path)
 
-    for i, workspace_id in enumerate(workspace_ids, 1):
+    # Enable a shared per-agent scan cache for multi-workspace batches so we
+    # scan each agent once instead of re-scanning for every workspace.
+    use_scan_cache = len(workspace_ids) > 1
+    if use_scan_cache:
+        prime_workspace_scan_cache()
+    try:
+        for i, workspace_id in enumerate(workspace_ids, 1):
             logger.banner(f"Starting to process workspace {i}/{len(workspace_ids)}: {workspace_id}")
             start_time = time.time()
             workspace_perf_start = time.perf_counter()
@@ -209,11 +219,14 @@ async def extract_workspaces(
                 skipped += 1
             else:
                 successful += 1
-            
+
             stats[workspace_id] = result
             logger.info(
                 f"[PERF] extract_workspaces | workspace {workspace_id}: {_elapsed_ms(workspace_perf_start):.1f}ms"
             )
+    finally:
+        if use_scan_cache:
+            clear_workspace_scan_cache()
 
     pipeline_time = (datetime.now() - pipeline_start).total_seconds()
     logger.info(f"[PERF] extract_workspaces | TOTAL: {_elapsed_ms(perf_start):.1f}ms")

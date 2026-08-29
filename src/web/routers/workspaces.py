@@ -7,6 +7,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query
 
 from src.shared.workspace_discovery import find_workspace
+from src.shared.io.paths import is_home_or_root_dir
 from src.shared.logging.logger import get_logger
 from src.web.shared_state import (
     connect_db,
@@ -26,6 +27,7 @@ async def get_browse_workspaces(
     page_size: int = Query(50, ge=1, le=500),
     include_live: bool = Query(True),
     agent: str | None = Query(None),
+    sort: str = Query("name", pattern="^(name|modified)$"),
 ):
     """List available workspaces with extraction/analysis status.
 
@@ -56,8 +58,11 @@ async def get_browse_workspaces(
                         for agent in data["agents"]
                     },
                     "source_available": None,
+                    "first_timestamp": data["first_timestamp"],
+                    "last_timestamp": data["last_timestamp"],
                 }
                 for data in db_workspaces.values()
+                if not is_home_or_root_dir(data["workspace_folder"])
             ]
 
         normalized_agent = agent.strip().casefold() if agent else None
@@ -72,7 +77,14 @@ async def get_browse_workspaces(
             ]
             perf.checkpoint("filter_agent")
 
-        merged_workspaces.sort(key=lambda x: x["workspace_name"].lower())
+        if sort == "modified":
+            # Most recently active first; workspaces without a timestamp go last.
+            merged_workspaces.sort(
+                key=lambda x: (x.get("last_timestamp") or "", x["workspace_name"].lower()),
+                reverse=True,
+            )
+        else:
+            merged_workspaces.sort(key=lambda x: x["workspace_name"].lower())
         perf.checkpoint("sort_workspaces")
 
         # Paginate results

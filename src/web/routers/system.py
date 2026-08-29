@@ -33,9 +33,8 @@ async def get_system_stats():
     try:
         run_dir = get_shared_run_dir()
         db_path = get_db_path(Path(run_dir))
-        if not db_path.exists():
-            raise HTTPException(status_code=404, detail="Database not available")
-        
+        # connect_db creates and initializes an empty schema if the DB does
+        # not yet exist, so a fresh install returns zeroed stats instead of 500.
         conn = db_schema.connect_db(db_path)
         
         try:

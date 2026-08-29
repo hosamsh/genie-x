@@ -546,7 +546,14 @@ def _detect_language(file_path: str) -> str:
 
 
 def _normalize_path(path: str) -> str:
-    return path.replace("\\", "/").lower()
+    if not path:
+        return ""
+    normalized = path.replace("\\", "/")
+    # Strip the leading slash before a Windows drive letter. VS Code file URIs
+    # yield paths like "/c:/code/project"; we want "c:/code/project".
+    if len(normalized) >= 3 and normalized[0] == "/" and normalized[2] == ":":
+        normalized = normalized[1:]
+    return normalized.lower()
 
 
 def _unique_preserve_order(values: list[Any]) -> list[Any]:

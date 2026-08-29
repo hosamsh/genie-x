@@ -78,6 +78,8 @@ class WorkspaceInfo(DataclassIO):
             "turn_count": self.turn_count,
             "status": status_info,
             "source_available": self.source_available,
+            "first_timestamp": self.first_timestamp,
+            "last_timestamp": self.last_timestamp,
         }
 
 

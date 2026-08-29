@@ -20,6 +20,7 @@ from src.shared.logging.logger import get_logger
 from src.shared.database import db_schema
 from src.shared.database import db_extract
 from src.shared.io.run_dir import get_db_path as _get_db_path
+from src.shared.io.paths import is_home_or_root_dir
 
 logger = get_logger(__name__)
 
@@ -122,10 +123,11 @@ class WorkspaceStatus:
     # Properties for web API serialization
     @property
     def extracted_at(self) -> Optional[datetime]:
-        """Return first_timestamp as datetime for API responses."""
-        if self.first_timestamp:
+        """Return latest known activity as datetime for API responses."""
+        timestamp = self.last_timestamp or self.first_timestamp
+        if timestamp:
             try:
-                return datetime.fromisoformat(self.first_timestamp)
+                return datetime.fromisoformat(timestamp)
             except (ValueError, TypeError):
                 pass
         return None
@@ -461,7 +463,11 @@ def _get_all_workspace_metadata_locked() -> Dict[str, Any]:
         merged._related_workspace_ids = sorted(set(existing._related_workspace_ids or [existing.workspace_id]) | set(ws_info._related_workspace_ids or [ws_id]))
         consolidated[merge_key] = merged
 
-    final_map = {workspace.workspace_id: workspace for workspace in consolidated.values()}
+    final_map = {
+        workspace.workspace_id: workspace
+        for workspace in consolidated.values()
+        if not is_home_or_root_dir(workspace.workspace_folder)
+    }
     _workspace_metadata_cache["run_dir"] = run_dir
     _workspace_metadata_cache["ts"] = now
     _workspace_metadata_cache["payload"] = final_map

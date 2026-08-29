@@ -6,8 +6,8 @@ from unittest.mock import patch
 import pytest
 
 from src.pipeline.extraction import turn_enrichment
-from src.pipeline.extraction.turn_enrichment import enrich_turn
-from src.shared.models.turn import Turn
+from src.pipeline.extraction.turn_enrichment import enrich_turn, enrich_turns
+from src.shared.models.turn import CodeEdit, Turn
 from src.shared.text.text_shrinker import TextShrinker, ShrinkConfig
 
 
@@ -77,3 +77,25 @@ def test_parent_session_relationship_fields_are_preserved() -> None:
 
     assert enriched.parent_session_id == "parent-session-1"
     assert enriched.relationship_type == "subagent"
+
+
+def test_snapshot_edit_chaining_is_scoped_per_session() -> None:
+    turns = [
+        _make_turn(
+            session_id="session-1",
+            turn=1,
+            timestamp_ms=1,
+            code_edits=[CodeEdit(file_path="src/app.py", language="python", code_after="old")],
+        ),
+        _make_turn(
+            session_id="session-2",
+            turn=1,
+            timestamp_ms=2,
+            code_edits=[CodeEdit(file_path="src/app.py", language="python", code_after="new")],
+        ),
+    ]
+
+    enriched = enrich_turns(turns, calculate_metrics=False)
+
+    assert enriched[0].code_edits[0].code_before is None
+    assert enriched[1].code_edits[0].code_before is None

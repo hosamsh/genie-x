@@ -273,6 +273,7 @@ class CodexLowLevelParser(LowLevelWorkspaceParser):
         pending_tool_calls: dict[str, ToolCallRecord] = {}
         pending_spawn_begins: dict[str, dict[str, Any]] = {}
         event_index = 0
+        current_model = ""
 
         try:
             with open(rollout_file, "r", encoding="utf-8", errors="replace") as handle:
@@ -312,6 +313,18 @@ class CodexLowLevelParser(LowLevelWorkspaceParser):
                             metadata["git"] = git_payload
                         continue
 
+                    if item_type == "turn_context":
+                        # Codex records the active model per turn in turn_context,
+                        # not in session_meta. Track it so assistant events carry it.
+                        model = str(payload.get("model") or "").strip()
+                        if not model:
+                            settings = as_dict(as_dict(payload.get("collaboration_mode")).get("settings"))
+                            model = str(settings.get("model") or "").strip()
+                        if model:
+                            current_model = model
+                            metadata.setdefault("model", model)
+                        continue
+
                     if item_type != "event_msg":
                         continue
 
@@ -324,6 +337,8 @@ class CodexLowLevelParser(LowLevelWorkspaceParser):
                         pending_spawn_begins,
                     )
                     if parsed_event is not None:
+                        if parsed_event.role == "assistant" and not parsed_event.model_id and current_model:
+                            parsed_event.model_id = current_model
                         events.append(parsed_event)
                         event_index += 1
                     links.extend(new_links)

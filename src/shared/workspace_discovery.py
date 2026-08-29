@@ -16,6 +16,7 @@ from src.extract.base import LowLevelWorkspaceParser
 from src.extract.models import WorkspaceDescriptor
 from src.pipeline.extraction.adapter import adapt_parsed_workspace
 from src.shared.io.paths import resolve_workspace_path
+from src.shared.io.paths import is_home_or_root_dir
 from src.shared.logging.logger import get_logger
 from src.shared.models.workspace import WorkspaceActivity, WorkspaceInfo
 
@@ -23,6 +24,13 @@ logger = get_logger(__name__)
 
 _workspace_folders_cache: Optional[Set[str]] = None
 _find_workspace_cache: Dict[str, Optional[WorkspaceInfo]] = {}
+
+# Opt-in cache of per-agent workspace scans. Disabled (None) by default so the
+# long-running web server keeps its existing, un-cached scan behaviour (no added
+# staleness). A CLI batch (e.g. `--extract --all`) enables it via
+# prime_workspace_scan_cache() so all workspaces share ONE scan instead of
+# re-scanning every agent (~40s each) per workspace.
+_agent_scan_cache: Optional[Dict[str, List[WorkspaceInfo]]] = None
 
 
 def clear_find_workspace_cache() -> None:
@@ -35,6 +43,25 @@ def clear_workspace_folders_cache() -> None:
     global _workspace_folders_cache
     _workspace_folders_cache = None
     _workspace_identity_key.cache_clear()
+
+
+def prime_workspace_scan_cache() -> None:
+    """Enable and populate the per-agent scan cache for a batch operation.
+
+    Only intended for short-lived CLI runs. Must be paired with
+    clear_workspace_scan_cache() (use try/finally) so the process does not hold
+    a stale snapshot afterwards.
+    """
+    global _agent_scan_cache
+    _agent_scan_cache = {}
+    for agent_name in _list_all_agents():
+        _scan_agent_workspaces(agent_name)
+
+
+def clear_workspace_scan_cache() -> None:
+    """Disable the per-agent scan cache (restores default un-cached behaviour)."""
+    global _agent_scan_cache
+    _agent_scan_cache = None
 
 
 def get_all_workspace_folders() -> Set[str]:
@@ -205,12 +232,19 @@ def _list_all_agents() -> List[str]:
 
 
 def _scan_agent_workspaces(agent_name: str) -> List[WorkspaceInfo]:
+    if _agent_scan_cache is not None and agent_name in _agent_scan_cache:
+        return _agent_scan_cache[agent_name]
     start_time = time.perf_counter()
     try:
         parser = build_parser(agent_name)
         descriptors = parser.scan_workspaces()
         workspaces: list[WorkspaceInfo] = []
         for descriptor in descriptors:
+            # Skip home directories and filesystem roots. CLI agents record the
+            # directory they were launched from, which is often a home dir
+            # rather than a real project.
+            if is_home_or_root_dir(descriptor.workspace_folder):
+                continue
             activity = _get_descriptor_discovery_stats(parser, descriptor)
             if activity is None or activity.session_count <= 0 or activity.turn_count <= 0:
                 continue
@@ -227,9 +261,13 @@ def _scan_agent_workspaces(agent_name: str) -> List[WorkspaceInfo]:
         logger.info(
             f"[PERF] list_all_workspaces | scan {agent_name}: {(time.perf_counter()-start_time)*1000:.1f}ms ({len(workspaces)} workspaces)"
         )
+        if _agent_scan_cache is not None:
+            _agent_scan_cache[agent_name] = workspaces
         return workspaces
     except Exception as exc:
         logger.warning("workspace scan failed for %s: %s", agent_name, exc)
+        if _agent_scan_cache is not None:
+            _agent_scan_cache[agent_name] = []
         return []
 
 

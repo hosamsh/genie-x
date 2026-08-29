@@ -209,3 +209,82 @@ def resolve_workspace_path(workspace_folder: str) -> Tuple[str, bool]:
     
     # Regular path - return as-is
     return (workspace_folder, False)
+
+
+# Directory names that act as containers for individual user home directories
+# across operating systems (case-insensitive). A folder sitting directly inside
+# one of these is a user home directory, not a project.
+_HOME_CONTAINER_DIRS = {"users", "home"}
+
+
+def _is_root_only_prefix(segments: list[str]) -> bool:
+    """True if *segments* form only a filesystem-root/drive/mount prefix.
+
+    Used to distinguish ``.../Users/<name>`` (a home directory) from
+    ``.../Users/<name>/project`` (a real folder that merely lives under a home).
+    """
+    if not segments:
+        return True  # POSIX root, e.g. "/home" or "/Users"
+    if len(segments) == 1 and segments[0].endswith(":"):
+        return True  # Windows drive root, e.g. "c:/Users"
+    if len(segments) == 2 and segments[0] == "mnt" and len(segments[1]) == 1:
+        return True  # WSL mount, e.g. "/mnt/c/Users"
+    return False
+
+
+def is_home_or_root_dir(path: str) -> bool:
+    """Return True if *path* is a filesystem root or a user home directory.
+
+    This is a purely *structural* check with no hardcoded usernames or
+    machine-specific paths. It identifies locations that are never real
+    project folders, regardless of OS or environment:
+
+    - Filesystem / drive / mount roots: ``/``, ``C:\\``, ``/mnt/c`` ...
+    - User home directories: ``/home/<user>``, ``/Users/<user>``,
+      ``<drive>:/Users/<user>``, ``/mnt/<drive>/Users/<user>``, ``/root`` ...
+    - The current process's own home directory (``Path.home()``).
+
+    These typically appear because CLI agents record the working directory
+    they were launched from, which may be a home directory rather than a
+    project.
+    """
+    if not path:
+        return False
+
+    normalized = normalize_path(path).rstrip("/").lower()
+    if not normalized:
+        return True  # POSIX filesystem root "/"
+
+    # The current user's actual home directory (any OS), resolved dynamically.
+    try:
+        home = normalize_path(str(Path.home())).rstrip("/").lower()
+        if home and normalized == home:
+            return True
+    except (RuntimeError, OSError):
+        pass
+
+    segments = [s for s in normalized.split("/") if s]
+    if not segments:
+        return True
+
+    # Windows drive root, e.g. "c:" (from "C:\").
+    if len(segments) == 1 and segments[0].endswith(":"):
+        return True
+
+    # Single-segment system home/root, e.g. "/root".
+    if segments == ["root"]:
+        return True
+
+    # WSL / Unix mount root, e.g. "/mnt/c".
+    if len(segments) == 2 and segments[0] == "mnt" and len(segments[1]) == 1:
+        return True
+
+    # A home directory sitting directly inside a user-container dir, e.g.
+    # "/home/<user>", "/Users/<user>", "c:/Users/<user>", "/mnt/c/Users/<user>".
+    # Only matches when nothing but a root/drive/mount prefix precedes the
+    # container, so real projects nested under a home dir are preserved.
+    if len(segments) >= 2 and segments[-2] in _HOME_CONTAINER_DIRS:
+        if _is_root_only_prefix(segments[:-2]):
+            return True
+
+    return False

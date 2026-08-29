@@ -59,7 +59,7 @@ def test_workspace_sessions_hide_subagents_and_annotate_parent(monkeypatch) -> N
     )
     monkeypatch.setattr(
         "src.web.routers.sessions.get_sessions_for_workspace_by_folder",
-        lambda _workspace_id, _agent: sessions,
+        lambda _workspace_id, _agent, **_kwargs: sessions,
     )
 
     result = asyncio.run(get_workspace_sessions(workspace_id))
@@ -113,7 +113,7 @@ def test_workspace_sessions_hide_bootstrap_only_clear_sessions(monkeypatch) -> N
     )
     monkeypatch.setattr(
         "src.web.routers.sessions.get_sessions_for_workspace_by_folder",
-        lambda _workspace_id, _agent: sessions,
+        lambda _workspace_id, _agent, **_kwargs: sessions,
     )
 
     result = asyncio.run(get_workspace_sessions(workspace_id))
@@ -153,7 +153,7 @@ def test_workspace_sessions_annotate_sdk_cli_and_clear_self_parent(monkeypatch) 
     )
     monkeypatch.setattr(
         "src.web.routers.sessions.get_sessions_for_workspace_by_folder",
-        lambda _workspace_id, _agent: sessions,
+        lambda _workspace_id, _agent, **_kwargs: sessions,
     )
 
     result = asyncio.run(get_workspace_sessions(workspace_id))

@@ -1,15 +1,21 @@
 """Unit tests for src.shared.io.paths – is_valid_session_id and is_contained_in."""
+
 from __future__ import annotations
 
 
 import pytest
 
-from src.shared.io.paths import is_valid_session_id, is_contained_in
+from src.shared.io.paths import (
+    is_valid_session_id,
+    is_contained_in,
+    is_home_or_root_dir,
+)
 
 
 # =============================================================================
 # is_valid_session_id
 # =============================================================================
+
 
 class TestIsValidSessionId:
     """Verify safe/unsafe session ID classification."""
@@ -64,6 +70,7 @@ class TestIsValidSessionId:
 # is_contained_in
 # =============================================================================
 
+
 class TestIsContainedIn:
     """Verify containment / directory-traversal detection."""
 
@@ -109,3 +116,68 @@ class TestIsContainedIn:
         # Path doesn't have to exist; containment is purely lexical after resolve
         phantom = tmp_path / "non_existent_subdir"
         assert is_contained_in(phantom, tmp_path) is True
+
+
+# =============================================================================
+# is_home_or_root_dir
+# =============================================================================
+
+
+class TestIsHomeOrRootDir:
+    """Verify structural detection of home directories and filesystem roots."""
+
+    # --- home directories (should be excluded) ---
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/mnt/c/users/alice",  # Windows home seen from WSL (lowercase)
+            "/mnt/c/Users/alice",  # Windows home seen from WSL (real casing)
+            "/mnt/d/Users/someone",  # any drive
+            "c:/Users/alice",  # native Windows
+            "C:\\Users\\alice",  # native Windows, backslashes
+            "/home/alice",  # native Linux
+            "/Users/alice",  # native macOS
+            "/root",  # root user home
+            "/home/alice/",  # trailing slash tolerated
+        ],
+    )
+    def test_home_directories_detected(self, path):
+        assert is_home_or_root_dir(path) is True
+
+    # --- filesystem / drive / mount roots (should be excluded) ---
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/",
+            "c:/",
+            "C:\\",
+            "/mnt/c",
+            "/mnt/d/",
+        ],
+    )
+    def test_roots_detected(self, path):
+        assert is_home_or_root_dir(path) is True
+
+    # --- real projects (should be kept) ---
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/mnt/c/users/alice/code/genie-x",  # project nested under home
+            "c:/Users/alice/projects/app",
+            "/home/alice/dev/service",
+            "/Users/alice/repos/thing",
+            "/opt/apps/my-service",
+            "/mnt/c/code/genie-x",
+            "c:/code/projects/genie-x",
+        ],
+    )
+    def test_real_projects_kept(self, path):
+        assert is_home_or_root_dir(path) is False
+
+    def test_empty_string_is_not_home_or_root(self):
+        # Empty means "unknown" - we can't judge, so keep it.
+        assert is_home_or_root_dir("") is False
+
+    def test_project_named_like_container_is_kept(self):
+        # A project literally under ".../Users/name/Users" is still a real path.
+        assert is_home_or_root_dir("c:/Users/alice/Users") is False
